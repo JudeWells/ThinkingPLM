@@ -33,19 +33,21 @@ REPO_ROOT = Path(__file__).resolve().parent
 # Modal can reuse already-downloaded weights instead of fetching them again.
 LOCAL_MODEL_DIR = Path(os.environ.get("MODEL_DIR", Path.home() / ".cache/bagel/models"))
 
-# Image definition: install all Python dependencies that BAGEL + ProFam need,
-# then add the local repository and (optionally) cached model weights.
+# Image definition: install BAGEL and ProFam from their GitHub repositories,
+# plus any additional dependencies, then add the local pipeline files.
 image = (
   modal.Image.debian_slim()
+  # git is needed for pip install from GitHub URLs
+  .apt_install("git")
   .pip_install(
-    # PyTorch
-    "torch",
-    # ProFam dependencies
+    # BAGEL (biobagel) — includes biotite, boileroom, numpy, pandas, pydantic, matplotlib
+    "biobagel[local] @ git+https://github.com/softnanolab/bagel.git",
+    # ProFam — includes torch, transformers, lightning, hydra-core, etc.
+    "git+https://github.com/alex-hh/profam.git",
+    # Additional dependencies not pulled by the above
     "transformers>=4.49.0,<5.0.0",
     "tokenizers",
-    "lightning",
     "pytorch-lightning",
-    "hydra-core",
     "omegaconf",
     "rootutils",
     "datasets",
@@ -56,20 +58,24 @@ image = (
     "scipy",
     "scikit-learn",
     "numba",
-    # BAGEL dependencies
-    "boileroom==0.2.2",
-    "pydantic>=2.10.6",
     "modal",
-    "pandas>=2.2.3",
-    # Shared / pipeline dependencies
-    "numpy>=2.2.0",
-    "biotite>=1.0.1",
-    "matplotlib>=3.10.0",
     "pyyaml",
   )
-  # Add the local repository so the remote job sees the same BAGEL + ProFam
-  # source tree as on the developer machine (replaces deprecated Mount API).
-  .add_local_dir(str(REPO_ROOT), remote_path="/workspace")
+  # Add the local pipeline files (configs, scripts) to the container.
+  # Exclude profam/ and bagel/ source trees (pip-installed above) and
+  # large artefacts that aren't needed inside the container.
+  .add_local_dir(
+    str(REPO_ROOT),
+    remote_path="/workspace",
+    ignore=[
+      "profam/",
+      "bagel/",
+      "model_checkpoints",
+      "outputs/",
+      ".git/",
+      "__pycache__/",
+    ],
+  )
 )
 
 # Optionally include cached model weights so BAGEL doesn't re-download them.
@@ -92,9 +98,8 @@ def _setup_remote_env() -> None:
   """Configure sys.path and working directory inside the Modal container."""
   import sys
 
+  # The pipeline script itself lives under /workspace.
   sys.path.insert(0, "/workspace")
-  sys.path.insert(0, "/workspace/bagel/src")
-  sys.path.insert(0, "/workspace/profam")
   os.chdir("/workspace")
 
   if Path("/models/bagel").exists():

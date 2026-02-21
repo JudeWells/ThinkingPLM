@@ -1,6 +1,6 @@
 ## ProFam + BAGEL Generative Pipeline
 
-This repository combines **ProFam** (protein sequence generation) and **BAGEL** (structure prediction + energies) into an iterative generative design pipeline driven by simple YAML configuration files.
+This repository implements an iterative generative design pipeline that combines **ProFam** (protein sequence generation) and **BAGEL** (structure prediction + energies), driven by simple YAML configuration files.  ProFam and BAGEL are installed as external pip packages from their GitHub repositories — they are **not** part of this codebase.
 
 The main entrypoint is `run_profam_bagel_pipeline.py` at the repository root, plus convenience scripts for running on a PBS cluster or on a local Mac.
 
@@ -70,10 +70,10 @@ chmod +x setup_environment.sh
 
 This script will:
 1. Create a `profam_bagel` conda environment with Python 3.11.
-2. Install BAGEL (editable) — pulls `boileroom`, `biotite`, `numpy`, `pydantic`, etc.
+2. Install BAGEL (`biobagel`) from GitHub — pulls `boileroom`, `biotite`, `numpy`, `pydantic`, etc.
 3. Detect the `torch` version that `boileroom` installed and install matching `torchvision`/`torchaudio`.
-4. Install ProFam's core dependencies (`transformers`, `lightning`, `hydra-core`, etc.).
-5. Install pipeline utilities (`pyyaml`, `matplotlib`, `modal`).
+4. Install ProFam from GitHub — pulls `transformers`, `lightning`, `hydra-core`, etc.
+5. Install pipeline utilities (`pyyaml`, `modal`).
 6. Verify that all key imports work.
 
 After the script completes:
@@ -91,33 +91,31 @@ If you prefer to set up the environment manually:
 conda create -n profam_bagel python=3.11 -y
 conda activate profam_bagel
 
-# 1. Install BAGEL first (sets the torch version via boileroom)
-pip install -e bagel
-pip install -e "bagel[local]"
+# 1. Install BAGEL from GitHub (sets the torch version via boileroom)
+pip install "biobagel[local] @ git+https://github.com/softnanolab/bagel.git"
 
 # 2. Install matching torchvision/torchaudio for the torch version boileroom pulled
 #    Check: python -c "import torch; print(torch.__version__)"
 #    For torch 2.6.x:
 pip install torchvision==0.21.0 torchaudio==2.6.0
 
-# 3. Install ProFam core dependencies
-pip install "transformers>=4.49.0" tokenizers datasets accelerate \
-            lightning pytorch-lightning hydra-core omegaconf
+# 3. Install ProFam from GitHub
+pip install "git+https://github.com/alex-hh/profam.git"
 
-# 4. Install additional ProFam runtime dependencies
-pip install biopython rootutils safetensors huggingface-hub scipy scikit-learn
+# 4. Install additional ProFam runtime dependencies not in its setup.py
+pip install rootutils safetensors huggingface-hub biopython scipy scikit-learn
 
 # 5. Install pipeline utilities
-pip install pyyaml "matplotlib>=3.10.0" modal
+pip install pyyaml modal
 ```
 
 #### Prerequisites
 
 Before running the pipeline you also need:
 
-1. **ProFam model checkpoint** — download it into `profam/model_checkpoints/`:
+1. **ProFam model checkpoint** — download it into `model_checkpoints/`:
    ```bash
-   python profam/scripts/hf_download_checkpoint.py
+   python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='model_checkpoints/profam-1')"
    ```
 2. **Template structure** (if using `TemplateMatchEnergy`) — place the `.cif` file at the path specified in your energy config (e.g. `template.cif` in the repo root), or use a `pdb_code` to download it automatically.
 3. **Modal token** (if using `run_on_modal: true`) — authenticate with:
@@ -144,7 +142,7 @@ Minimal example (see `example_pipeline_config.yaml` for the full version):
 initial_fasta: initial_sequences.fasta
 
 # ProFam
-profam_checkpoint_dir: profam/model_checkpoints
+profam_checkpoint_dir: model_checkpoints/profam-1
 profam_sampler: single
 profam_num_samples: 64
 profam_temperature: 0.8
@@ -410,7 +408,7 @@ Run without a YAML file by supplying all required flags:
 ```bash
 python run_profam_bagel_pipeline.py \
   --initial_fasta initial_sequences.fasta \
-  --profam_checkpoint_dir profam/model_checkpoints \
+  --profam_checkpoint_dir model_checkpoints/profam-1 \
   --energy_config example_energy_template_match.yaml \
   --profam_num_samples 64 \
   --f_inject 0.25 \
@@ -487,7 +485,7 @@ chmod +x setup_environment.sh
 
 # Download the ProFam checkpoint
 conda activate profam_bagel
-python profam/scripts/hf_download_checkpoint.py
+python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='model_checkpoints/profam-1')"
 ```
 
 If the cluster does not have internet access on compute nodes, run the setup and model download on the login node (which typically does have internet access).
@@ -568,8 +566,8 @@ For a run with `output_dir: outputs/pipeline_run1`, the pipeline creates:
 | `modal.exception.AuthError: Token missing` | Run `modal token new` to authenticate |
 | `AssertionError: MODEL_DIR must be set` | Set `export MODEL_DIR=~/.cache/bagel/models` (or wherever your ESMFold weights are) |
 | `ImportError: lightning` or `torchvision` errors | torch/torchvision version mismatch — re-run `setup_environment.sh` or manually install matching versions (see Section 2) |
-| `boileroom` not found | Ensure BAGEL was installed: `pip install -e bagel` |
-| ProFam checkpoint not found | Download with `python profam/scripts/hf_download_checkpoint.py` |
+| `boileroom` not found | Ensure BAGEL was installed: `pip install "biobagel[local] @ git+https://github.com/softnanolab/bagel.git"` |
+| ProFam checkpoint not found | Download with `python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='model_checkpoints/profam-1')"` |
 | Slow first Modal run | First run builds the container image; subsequent runs reuse the cached image |
 
 ---
@@ -582,17 +580,14 @@ profam_bagel/
 ├── run_profam_bagel_modal_app.py      # Modal app for cloud execution
 ├── setup_environment.sh               # Environment setup script
 ├── example_pipeline_config.yaml       # Example YAML config
-├── example_energy_template_match.yaml    # Example energy config (template matching)
-├── example_energy_lis_binding.yaml       # Example energy config (LIS binding with target chain)
+├── example_energy_template_match.yaml # Example energy config (template matching)
+├── example_energy_lis_binding.yaml    # Example energy config (LIS binding with target chain)
 ├── run_pipeline_pbs.sh                # PBS cluster batch script
 ├── run_pipeline_mac.sh                # Local convenience wrapper
-├── bagel/                             # BAGEL library (structure + energies)
-│   ├── pyproject.toml
-│   └── src/bagel/
-│       ├── oracles/folding/           # ESMFold folding oracle
-│       └── energies.py                # Energy term definitions
-└── profam/                            # ProFam library (sequence generation)
-    ├── setup.py
-    ├── scripts/generate_sequences.py  # Sequence generation script
-    └── model_checkpoints/             # ProFam model weights (user-downloaded)
+├── initial_sequences.fasta            # Example initial sequences
+└── model_checkpoints/                 # ProFam model weights (user-downloaded)
 ```
+
+**External dependencies** (installed via pip from GitHub):
+- **BAGEL** (`biobagel`): `pip install "biobagel[local] @ git+https://github.com/softnanolab/bagel.git"` — structure prediction + energy terms
+- **ProFam**: `pip install "git+https://github.com/alex-hh/profam.git"` — protein sequence generation

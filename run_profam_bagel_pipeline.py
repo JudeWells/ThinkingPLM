@@ -67,13 +67,12 @@ import argparse
 import json
 import math
 import os
-import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
+import torch
 
 from biotite.structure.io.pdb import PDBFile  # type: ignore
 from biotite.structure.io.pdbx import CIFFile, get_structure  # type: ignore
@@ -85,29 +84,29 @@ except ImportError as e:  # pragma: no cover - import-time check
     "PyYAML is required to run the pipeline. Install it with `pip install pyyaml`."
   ) from e
 
+# BAGEL — installed via: pip install git+https://github.com/softnanolab/bagel.git
+import bagel as bg  # type: ignore
+from bagel.oracles import ESMFold  # type: ignore
+from bagel.oracles.folding.utils import sequence_from_atomarray  # type: ignore
+from bagel.utils import get_atomarray_in_residue_range  # type: ignore
 
-# ---------------------------------------------------------------------------
-# Path and import setup so we can access both ProFam and BAGEL codebases
-# ---------------------------------------------------------------------------
+# ProFam — installed via: pip install git+https://github.com/alex-hh/profam.git
+from src.data.objects import ProteinDocument  # type: ignore
+from src.data.processors.preprocessing import (  # type: ignore
+  AlignedProteinPreprocessingConfig,
+  ProteinDocumentPreprocessor,
+)
+from src.models.inference import (  # type: ignore
+  EnsemblePromptBuilder,
+  ProFamEnsembleSampler,
+  ProFamSampler,
+  PromptBuilder,
+)
+from src.models.llama import LlamaLitModule  # type: ignore
+from src.sequence.fasta import read_fasta, output_fasta  # type: ignore
+from src.utils.utils import seed_all  # type: ignore
 
 ROOT_DIR = Path(__file__).resolve().parent
-
-# For BAGEL (`import bagel as bg`)
-BAGEL_SRC = ROOT_DIR / "bagel" / "src"
-if str(BAGEL_SRC) not in sys.path:
-  sys.path.insert(0, str(BAGEL_SRC))
-
-# For ProFam, its scripts expect "src" to be importable
-PROFAM_ROOT = ROOT_DIR / "profam"
-if str(PROFAM_ROOT) not in sys.path:
-  sys.path.insert(0, str(PROFAM_ROOT))
-
-import bagel as bg  # type: ignore  # noqa: E402
-from bagel.oracles import ESMFold  # type: ignore  # noqa: E402
-from bagel.oracles.folding.utils import sequence_from_atomarray  # type: ignore  # noqa: E402
-from bagel.utils import get_atomarray_in_residue_range  # type: ignore  # noqa: E402
-
-from src.sequence.fasta import read_fasta, output_fasta  # type: ignore  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -356,70 +355,201 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 # ---------------------------------------------------------------------------
-# ProFam integration (via its existing generate_sequences.py script)
+# ProFam integration — direct API calls (model loaded once, reused)
 # ---------------------------------------------------------------------------
+
+
+def load_profam_model(cfg: PipelineConfig) -> Tuple[Any, str]:
+  """
+  Load the ProFam model from checkpoint.  Called once at pipeline start;
+  the returned (model, device) tuple is passed to ``run_profam_generation``
+  on each cycle to avoid reloading from disk.
+  """
+  ckpt_path = cfg.profam_checkpoint_dir / "checkpoints" / "last.ckpt"
+  if not ckpt_path.is_file():
+    raise FileNotFoundError(
+      f"ProFam checkpoint not found at {ckpt_path}. "
+      "Run the download script or check profam_checkpoint_dir."
+    )
+
+  device = "cuda" if torch.cuda.is_available() else "cpu"
+  dtype = torch.bfloat16
+
+  # Detect best attention implementation
+  attn_impl = "sdpa"
+  try:
+    import flash_attn  # noqa: F401
+    attn_impl = "flash_attention_2"
+  except ImportError:
+    pass
+
+  # Load checkpoint and override attention implementation
+  print(f"Loading ProFam model from {ckpt_path} (device={device}, attn={attn_impl})...")
+  ckpt_blob = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+  hyper_params = ckpt_blob.get("hyper_parameters", {})
+  cfg_obj = hyper_params.get("config")
+  if cfg_obj is None:
+    raise RuntimeError(
+      "Could not find 'config' in checkpoint hyper_parameters "
+      "to override attention implementation."
+    )
+  setattr(cfg_obj, "attn_implementation", attn_impl)
+  setattr(cfg_obj, "_attn_implementation", attn_impl)
+
+  model: LlamaLitModule = LlamaLitModule.load_from_checkpoint(
+    ckpt_path, config=cfg_obj, strict=False, weights_only=False,
+  )
+  model.eval()
+  model.to(device, dtype=dtype)
+
+  seed_all(cfg.random_seed)
+  print("ProFam model loaded successfully.")
+
+  return model, device
 
 
 def run_profam_generation(
   cfg: PipelineConfig,
   input_fasta: Path,
   cycle_dir: Path,
+  model: Any,
+  device: str,
   fixed_positions: Dict[int, str] | None = None,
 ) -> Tuple[List[str], List[str]]:
   """
-  Run ProFam's `generate_sequences.py` script on `input_fasta` and return
-  accessions and sequences.
+  Generate sequences using ProFam's Python API.
+
+  This calls the sampler directly (no subprocess), reusing the model loaded
+  once by ``load_profam_model()``.
   """
-  script_path = PROFAM_ROOT / "scripts" / "generate_sequences.py"
-  if not script_path.is_file():
-    raise FileNotFoundError(f"ProFam generate_sequences.py not found at {script_path}")
+  # Build a ProteinDocument from the input FASTA.
+  names, seqs = read_fasta(
+    str(input_fasta), keep_insertions=True, to_upper=True, keep_gaps=False,
+  )
+  rep = names[0] if len(names) > 0 else "representative"
+  pool = ProteinDocument(
+    sequences=seqs,
+    accessions=names,
+    identifier=input_fasta.stem,
+    representative_accession=rep,
+  )
 
-  profam_out_dir = cycle_dir / "profam_outputs"
-  profam_out_dir.mkdir(parents=True, exist_ok=True)
+  # Compute generation length cap.
+  longest_prompt_len = int(max(pool.sequence_lengths))
+  max_sequence_length_multiplier = 1.2
+  default_cap = int(longest_prompt_len * max_sequence_length_multiplier)
+  if cfg.profam_max_generated_length is None:
+    max_gen_len = default_cap
+  else:
+    max_gen_len = min(int(cfg.profam_max_generated_length), default_cap)
 
-  sampler = cfg.profam_sampler
+  # Convert fixed_positions to token IDs if provided.
+  fixed_token_positions = None
+  if fixed_positions is not None:
+    fixed_token_positions = {
+      int(k): model.tokenizer.convert_tokens_to_ids(v)
+      for k, v in fixed_positions.items()
+    }
+
+  doc_token = "[RAW]"
+
+  # Build preprocessor and sampler.
+  if cfg.profam_sampler == "ensemble":
+    preproc_cfg = AlignedProteinPreprocessingConfig(
+      document_token=doc_token,
+      defer_sampling=True,
+      padding="do_not_pad",
+      shuffle_proteins_in_document=True,
+      keep_insertions=True,
+      to_upper=True,
+      keep_gaps=False,
+      use_msa_pos=False,
+      max_tokens_per_example=None,
+    )
+    preprocessor = ProteinDocumentPreprocessor(cfg=preproc_cfg)
+    builder = EnsemblePromptBuilder(
+      preprocessor=preprocessor, shuffle=True, seed=cfg.random_seed,
+    )
+    sampler_obj = ProFamEnsembleSampler(
+      name="ensemble_sampler",
+      model=model,
+      prompt_builder=builder,
+      document_token=doc_token,
+      reduction="mean_probs",
+      temperature=cfg.profam_temperature,
+      top_p=cfg.profam_top_p,
+      add_final_sep=True,
+    )
+    sampler_obj.to(device)
+    sequences, scores, _ = sampler_obj.sample_seqs_ensemble(
+      protein_document=pool,
+      num_samples=cfg.profam_num_samples,
+      max_tokens=cfg.profam_max_tokens,
+      num_prompts_in_ensemble=min(8, len(pool.sequences)),
+      max_generated_length=max_gen_len,
+      continuous_sampling=False,
+      minimum_sequence_length_proportion=0.5,
+      minimum_sequence_identity=None,
+      maximum_retries=5,
+      repeat_guard=True,
+    )
+  else:
+    preproc_cfg = AlignedProteinPreprocessingConfig(
+      document_token=doc_token,
+      defer_sampling=False,
+      padding="do_not_pad",
+      shuffle_proteins_in_document=True,
+      keep_insertions=True,
+      to_upper=True,
+      keep_gaps=False,
+      use_msa_pos=False,
+      max_tokens_per_example=cfg.profam_max_tokens - max_gen_len,
+    )
+    preprocessor = ProteinDocumentPreprocessor(cfg=preproc_cfg)
+    builder = PromptBuilder(
+      preprocessor=preprocessor, prompt_is_aligned=True, seed=cfg.random_seed,
+    )
+    sampling_kwargs: Dict[str, Any] = {}
+    if cfg.profam_top_p is not None:
+      sampling_kwargs["top_p"] = cfg.profam_top_p
+    if cfg.profam_temperature is not None:
+      sampling_kwargs["temperature"] = cfg.profam_temperature
+    sampler_obj = ProFamSampler(
+      name="single_sampler",
+      model=model,
+      prompt_builder=builder,
+      document_token=doc_token,
+      sampling_kwargs=sampling_kwargs if sampling_kwargs else None,
+      add_final_sep=True,
+    )
+    sampler_obj.to(device)
+    sequences, scores, _ = sampler_obj.sample_seqs(
+      protein_document=pool,
+      num_samples=cfg.profam_num_samples,
+      max_tokens=cfg.profam_max_tokens,
+      max_generated_length=max_gen_len,
+      continuous_sampling=False,
+      minimum_sequence_length_proportion=0.5,
+      minimum_sequence_identity=None,
+      maximum_retries=5,
+      repeat_guard=True,
+      fixed_positions=fixed_token_positions,
+    )
+
+  # Build accession names (matching the format used by generate_sequences.py).
   base = input_fasta.stem
-
-  cmd = [
-    sys.executable,
-    str(script_path),
-    "--checkpoint_dir",
-    str(cfg.profam_checkpoint_dir),
-    "--file_path",
-    str(input_fasta),
-    "--save_dir",
-    str(profam_out_dir),
-    "--sampler",
-    sampler,
-    "--num_samples",
-    str(cfg.profam_num_samples),
-    "--max_tokens",
-    str(cfg.profam_max_tokens),
+  accessions = [
+    f"{base}_sample_{i}_log_likelihood_{score:.3f}"
+    for i, score in enumerate(scores)
   ]
 
-  if cfg.profam_max_generated_length is not None:
-    cmd.extend(["--max_generated_length", str(cfg.profam_max_generated_length)])
-  if cfg.profam_temperature is not None:
-    cmd.extend(["--temperature", str(cfg.profam_temperature)])
-  if cfg.profam_top_p is not None:
-    cmd.extend(["--top_p", str(cfg.profam_top_p)])
-  if fixed_positions is not None:
-    cmd.extend(["--fixed_positions", json.dumps(fixed_positions)])
+  # Optionally save generated FASTA for debugging/reproducibility.
+  profam_out_dir = cycle_dir / "profam_outputs"
+  profam_out_dir.mkdir(parents=True, exist_ok=True)
+  out_fasta = profam_out_dir / f"{base}_generated_{cfg.profam_sampler}.fasta"
+  output_fasta(accessions, sequences, str(out_fasta))
 
-  # We rely on generate_sequences.py to take care of device / dtype / attention backend.
-  subprocess.run(cmd, check=True)
-
-  out_fasta = profam_out_dir / f"{base}_generated_{sampler}.fasta"
-  if not out_fasta.is_file():
-    raise FileNotFoundError(f"Expected ProFam output FASTA not found: {out_fasta}")
-
-  names, seqs = read_fasta(
-    str(out_fasta),
-    keep_insertions=True,
-    keep_gaps=False,
-    to_upper=True,
-  )
-  return list(names), list(seqs)
+  return list(accessions), list(sequences)
 
 
 # ---------------------------------------------------------------------------
@@ -1549,6 +1679,9 @@ def run_pipeline(
 ) -> None:
   cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
+  # Load ProFam model once and reuse across all cycles.
+  profam_model, profam_device = load_profam_model(cfg)
+
   # Load energy configuration & instantiate BAGEL folding oracle.
   energy_cfg = load_energy_config(cfg.energy_config)
   folding_oracle = build_folding_oracle(energy_cfg, force_modal=force_modal_folding)
@@ -1662,6 +1795,8 @@ def run_pipeline(
         cfg=cfg,
         input_fasta=profam_input_fasta,
         cycle_dir=cycle_dir,
+        model=profam_model,
+        device=profam_device,
         fixed_positions=fixed_residues,
       )
       if len(gen_seqs) != cfg.profam_num_samples:

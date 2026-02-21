@@ -6,15 +6,9 @@
 #
 #   python run_profam_bagel_pipeline.py --config example_pipeline_config.yaml
 #
-# This script resolves dependency conflicts between ProFam and BAGEL:
-#   - BAGEL requires numpy>=2.2.0 ; ProFam's freeze pins numpy==1.26.4
-#   - BAGEL requires matplotlib>=3.10.0 ; ProFam's freeze pins 3.9.4
-#   - BAGEL requires transformers>=4.49.0 ; ProFam's freeze pins 4.48.3
-#   - BAGEL requires boileroom, pydantic, modal (not in ProFam deps)
-#   - ProFam's requirements.txt includes CUDA packages that don't exist on macOS
-#
-# The strategy: use BAGEL's stricter lower bounds (they are newer), install
-# ProFam's core deps on top, and let pip resolve compatible versions.
+# Both ProFam and BAGEL (biobagel) are installed from their GitHub repos
+# as pip packages.  This script resolves known dependency conflicts between
+# them (e.g. numpy, matplotlib, transformers version pins).
 #
 # Usage:
 #   chmod +x setup_environment.sh
@@ -68,13 +62,13 @@ echo "Using Python: $(which python)"
 echo "Python version: $(python --version)"
 
 # -------------------------------------------------------------------------
-# 3. Install BAGEL (editable) first - this pulls boileroom==0.2.2 which
-#    constrains torch, plus biotite, numpy>=2.2, pandas, pydantic, matplotlib
+# 3. Install BAGEL (biobagel) from GitHub — this pulls boileroom==0.2.2
+#    which constrains torch, plus biotite, numpy>=2.2, pandas, pydantic,
+#    matplotlib.  The [local] extra adds transformers>=4.49.0.
 # -------------------------------------------------------------------------
 echo ""
-echo "Installing BAGEL (editable)..."
-pip install -e "${SCRIPT_DIR}/bagel"
-pip install -e "${SCRIPT_DIR}/bagel[local]"
+echo "Installing BAGEL (biobagel) from GitHub..."
+pip install "biobagel[local] @ git+https://github.com/softnanolab/bagel.git"
 
 # -------------------------------------------------------------------------
 # 4. Install PyTorch with matching torchvision/torchaudio
@@ -115,30 +109,18 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# 5. Install ProFam's core dependencies (not covered by BAGEL)
-#    We use the package names from profam/setup.py rather than the pinned
-#    requirements.txt (which has CUDA-only packages and old numpy pins).
+# 5. Install ProFam from GitHub
 # -------------------------------------------------------------------------
 echo ""
-echo "Installing ProFam dependencies..."
+echo "Installing ProFam from GitHub..."
+pip install "git+https://github.com/alex-hh/profam.git"
 
+# Additional ProFam runtime dependencies not in its setup.py
 pip install \
-  "transformers>=4.49.0" \
-  "tokenizers" \
-  "datasets" \
-  "accelerate" \
-  "lightning" \
-  "pytorch-lightning" \
-  "hydra-core" \
-  "omegaconf"
-
-# Additional ProFam runtime dependencies from requirements-cpu.txt
-pip install \
-  "biopython" \
-  "biotraj" \
   "rootutils" \
   "safetensors" \
   "huggingface-hub" \
+  "biopython" \
   "scipy" \
   "scikit-learn" \
   "numba" \
@@ -153,7 +135,6 @@ echo "Installing pipeline utilities..."
 
 pip install \
   "pyyaml" \
-  "matplotlib>=3.10.0" \
   "modal"
 
 # -------------------------------------------------------------------------
@@ -163,10 +144,6 @@ echo ""
 echo "Verifying imports..."
 
 python -c "
-import sys
-sys.path.insert(0, '${SCRIPT_DIR}/bagel/src')
-sys.path.insert(0, '${SCRIPT_DIR}/profam')
-
 print('Checking numpy...', end=' ')
 import numpy as np
 print(f'OK (v{np.__version__})')
@@ -219,6 +196,10 @@ print('Checking profam fasta utils...', end=' ')
 from src.sequence.fasta import read_fasta, output_fasta
 print('OK')
 
+print('Checking profam model inference...', end=' ')
+from src.models.inference import ProFamSampler, PromptBuilder
+print('OK')
+
 print('Checking pyyaml...', end=' ')
 import yaml
 print('OK')
@@ -241,6 +222,6 @@ echo "  python run_profam_bagel_pipeline.py --config example_pipeline_config.yam
 echo ""
 echo "Make sure you have:"
 echo "  1. Modal configured (modal token set) if using run_on_modal: true"
-echo "  2. ProFam checkpoint downloaded in profam/model_checkpoints/"
-echo "     (run: python profam/scripts/hf_download_checkpoint.py)"
+echo "  2. ProFam checkpoint downloaded in model_checkpoints/"
+echo "     (run: python -c \"from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='model_checkpoints/profam-1')\")"
 echo ""

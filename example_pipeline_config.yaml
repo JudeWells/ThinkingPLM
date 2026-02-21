@@ -19,7 +19,7 @@ initial_fasta: initial_sequences.fasta
 # -----------------------------------------------------------------------------
 
 # Directory containing the ProFam checkpoint and .hydra configuration.
-profam_checkpoint_dir: "profam/model_checkpoints/profam-1"
+profam_checkpoint_dir: "model_checkpoints/profam-1"
 
 # Sampler type: "single" or "ensemble".
 profam_sampler: single
