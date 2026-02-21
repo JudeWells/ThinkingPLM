@@ -1,0 +1,29 @@
+## Example energy configuration: TemplateMatchEnergy
+##
+## This config folds each generated sequence with ESMFold and computes a
+## backbone RMSD against a reference template structure.
+##
+## See README section 3 for full documentation of all supported keys.
+
+folding_oracle:
+  type: ESMFold
+  kwargs:
+    use_modal: false
+
+energies:
+  - type: TemplateMatchEnergy
+    kwargs:
+      weight: 1.0
+      backbone_only: true
+      distogram_separation: false
+
+      # Provide ONE of the two options below:
+      # Option A — local file:
+      template_structure_path: template.cif
+      # Option B — download from PDB (comment out template_structure_path above):
+      # pdb_code: "3ima"
+
+      template_chain_id: A
+
+      residues:
+        GEN: "0-43"
