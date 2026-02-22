@@ -523,7 +523,7 @@ def run_profam_generation(
       add_final_sep=True,
     )
     sampler_obj.to(device)
-    sequences, scores, _ = sampler_obj.sample_seqs(
+    sample_kwargs: Dict[str, Any] = dict(
       protein_document=pool,
       num_samples=cfg.profam_num_samples,
       max_tokens=cfg.profam_max_tokens,
@@ -533,8 +533,17 @@ def run_profam_generation(
       minimum_sequence_identity=None,
       maximum_retries=5,
       repeat_guard=True,
-      fixed_positions=fixed_token_positions,
     )
+    # fixed_positions is only available in newer ProFam versions.
+    import inspect
+    if "fixed_positions" in inspect.signature(sampler_obj.sample_seqs).parameters:
+      sample_kwargs["fixed_positions"] = fixed_token_positions
+    elif fixed_token_positions:
+      print(
+        "WARNING: fixed_positions requested but not supported by this "
+        "ProFam version — ignoring constrained residues."
+      )
+    sequences, scores, _ = sampler_obj.sample_seqs(**sample_kwargs)
 
   # Build accession names (matching the format used by generate_sequences.py).
   base = input_fasta.stem
@@ -2005,6 +2014,15 @@ def main(argv: Sequence[str] | None = None) -> None:
       import shutil
       shutil.rmtree(cfg.output_dir)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clear stale data from the Modal Volume *before* starting the poller,
+    # so it doesn't download results from a previous run.
+    try:
+      for entry in results_vol.listdir("/"):
+        results_vol.remove_file(entry.path, recursive=True)
+      results_vol.commit()
+    except Exception:
+      pass  # Volume may be empty
 
     # Background thread that polls the Modal Volume for new checkpoint files
     # written by the remote function, and saves them to the local output dir.

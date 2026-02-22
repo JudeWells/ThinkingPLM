@@ -33,17 +33,25 @@ REPO_ROOT = Path(__file__).resolve().parent
 # Modal can reuse already-downloaded weights instead of fetching them again.
 LOCAL_MODEL_DIR = Path(os.environ.get("MODEL_DIR", Path.home() / ".cache/bagel/models"))
 
+# Modal Secret containing the HuggingFace token (HF_TOKEN) for downloading
+# the gated ProFam checkpoint.  Create it once with:
+#   modal secret create huggingface-secret HF_TOKEN=hf_xxxxx
+hf_secret = modal.Secret.from_name("huggingface-secret")
+
 # Image definition: install BAGEL and ProFam from their GitHub repositories,
 # plus any additional dependencies, then add the local pipeline files.
+#
+# IMPORTANT: Modal requires add_local_dir / add_local_file to be the LAST
+# steps in the image build (no run_commands after them).  So all run_commands
+# (pip installs, ProFam clone, checkpoint download) come first, then the
+# local file overlay at the very end.
 image = (
   modal.Image.debian_slim()
-  # git is needed for pip install from GitHub URLs
+  # git is needed for pip install from GitHub URLs and the ProFam clone below.
   .apt_install("git")
   .pip_install(
     # BAGEL (biobagel) — includes biotite, boileroom, numpy, pandas, pydantic, matplotlib
     "biobagel[local] @ git+https://github.com/softnanolab/bagel.git",
-    # ProFam — includes torch, transformers, lightning, hydra-core, etc.
-    "git+https://github.com/alex-hh/profam.git",
     # Additional dependencies not pulled by the above
     "transformers>=4.49.0,<5.0.0",
     "tokenizers",
@@ -61,9 +69,32 @@ image = (
     "modal",
     "pyyaml",
   )
-  # Add the local pipeline files (configs, scripts) to the container.
-  # Exclude profam/ and bagel/ source trees (pip-installed above) and
-  # large artefacts that aren't needed inside the container.
+  # ProFam's setup.py uses find_packages(), but several sub-packages
+  # (src/sequence, src/evaluators, src/pipelines) are missing __init__.py
+  # so a plain pip install skips them.  We clone the repo, add the missing
+  # files, then install so that all sub-packages are included.
+  .run_commands(
+    "git clone --depth 1 https://github.com/alex-hh/profam.git /tmp/profam"
+    " && touch /tmp/profam/src/sequence/__init__.py"
+    "         /tmp/profam/src/evaluators/__init__.py"
+    "         /tmp/profam/src/pipelines/__init__.py"
+    " && pip install /tmp/profam"
+    " && rm -rf /tmp/profam",
+  )
+  # Download the ProFam-1 checkpoint from HuggingFace Hub (gated repo,
+  # requires HF_TOKEN).  Cached in the image layer — only downloads once.
+  # Create the secret with:  modal secret create huggingface-secret HF_TOKEN=hf_xxxxx
+  .run_commands(
+    "python -c \""
+    "from huggingface_hub import snapshot_download; "
+    "snapshot_download('judewells/ProFam-1', "
+    "local_dir='/workspace/model_checkpoints/profam-1', "
+    "local_dir_use_symlinks=False)"
+    "\"",
+    secrets=[hf_secret],
+  )
+  # Add the local pipeline files (configs, scripts, energy YAMLs).
+  # This MUST be the last step in the image build (Modal requirement).
   .add_local_dir(
     str(REPO_ROOT),
     remote_path="/workspace",
@@ -78,8 +109,9 @@ image = (
   )
 )
 
-# Optionally include cached model weights so BAGEL doesn't re-download them.
-if LOCAL_MODEL_DIR.exists():
+# Optionally include cached BAGEL folding model weights so BAGEL doesn't
+# re-download them.  Only mount if the directory exists AND is non-empty.
+if LOCAL_MODEL_DIR.is_dir() and any(LOCAL_MODEL_DIR.iterdir()):
   image = image.add_local_dir(str(LOCAL_MODEL_DIR), remote_path="/models/bagel")
 
 # Persistent volume for intermediate checkpoint files.  The local caller polls
