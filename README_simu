@@ -1,0 +1,11 @@
+config_1 and 1B you use the LISEnergy to find binders for papain
+it refers to PDB 3ima and you use papain as the target and cystatin 
+as the initial sequence_1. Difference is purely in the n_memory here.
+1C is identical to 1B just different seed
+
+config_2 and 2B is the same but using PDB:2JJT, which is SIRP together
+with CD47. In this case, we try to generate things that replicate CD47, using
+SIRP as target. 2 and 2B also differ only for n_memory
+
+config_3 uses a completely different energy alltogether, the hydrophobic energy
+We use CD22 5VKJ as an example

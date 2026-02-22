@@ -12,7 +12,7 @@ For each cycle (1 … max_cycles), the pipeline:
 
 1. **ProFam generation**
    - Reads an input FASTA containing the **initial sequences** and, from cycle 2 onward, the **subset selected in the previous cycle**.
-   - Calls ProFam's `scripts/generate_sequences.py` to generate `profam_num_samples` new sequences.
+   - Calls ProFam's sampling API directly to generate `profam_num_samples` new sequences.
 
 2. **BAGEL folding + energy evaluation**
    - For each generated sequence:
@@ -305,7 +305,7 @@ Multiple energy entries can each have their own target — if two entries share 
 
 #### 3.6 Sequence similarity tracking
 
-At each cycle, the pipeline automatically computes the **average sequence similarity** between the ProFam-generated sequences and the initial input sequences (from `initial_fasta`). For each generated sequence, the best-match similarity (fraction of identical residues, aligned from position 0) against all initial sequences is calculated. The mean of these best-match values is:
+At each cycle, the pipeline automatically computes the **average sequence similarity** between the ProFam-generated sequences and the initial input sequences (from `initial_fasta`). For each generated sequence, similarity to each initial sequence is computed via **global pairwise alignment** (Needleman–Wunsch, using Biopython's `PairwiseAligner`) as the fraction of identical residues over the alignment length. This correctly handles insertions and deletions — a single indel no longer shifts all downstream positions. The best (maximum) similarity across all initial sequences is kept, and the mean of those best-match values is:
 
 - Printed to the console during the run.
 - Stored in `cycle_stats.json` as `"all_avg_similarity"` per cycle.
@@ -569,6 +569,7 @@ For a run with `output_dir: outputs/pipeline_run1`, the pipeline creates:
 | `boileroom` not found | Ensure BAGEL was installed: `pip install "biobagel[local] @ git+https://github.com/softnanolab/bagel.git"` |
 | ProFam checkpoint not found | Download with `python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='model_checkpoints/profam-1')"` |
 | Slow first Modal run | First run builds the container image; subsequent runs reuse the cached image |
+| `enforce_template` has no effect | The `fixed_positions` feature used by constrained generation is only available in newer (unreleased) versions of ProFam. The current GitHub version (`main` branch) does **not** support it. If your local ProFam has `fixed_positions` (e.g. from a development branch), the pipeline will use it; otherwise it prints a warning and generates freely. Template mismatches then receive infinity energy and the cycle is retried. |
 
 ---
 

@@ -11,7 +11,7 @@
 
 # Initial set of sequences S1 (FASTA format). By default these are included in
 # the ProFam prompt at every cycle (see reinject_initial below).
-initial_fasta: initial_sequences.fasta
+initial_fasta: initial_sequences_2.fasta
 
 
 # -----------------------------------------------------------------------------
@@ -45,7 +45,7 @@ profam_top_p: 0.95
 
 # YAML file specifying the folding oracle and energy terms. See
 # `example_energy_template_match.yaml` for a TemplateMatchEnergy example.
-energy_config: example_energy_lis_binding.yaml
+energy_config: example_energy_lis_binding_2.yaml
 
 
 # -----------------------------------------------------------------------------
@@ -56,17 +56,17 @@ energy_config: example_energy_lis_binding.yaml
 f_inject: 0.2
 
 # Number of cycles to run.
-max_cycles: 20
+max_cycles: 10
 
 # Where all outputs (logs, structures, plots) will be stored.
-output_dir: outputs/example_lis_binding
+output_dir: outputs/example_lis_binding_2
 
 # Temperature used when converting energies into sampling probabilities
 # via softmax(-E / softmax_temperature).
 softmax_temperature: 0.01
 
 # Random seed for reproducible sampling.
-random_seed: 297482572
+random_seed: 98589234
 
 # Whether to run the **entire** pipeline (ProFam + BAGEL) on Modal instead
 # of locally. If set to true, `run_profam_bagel_pipeline.py` will dispatch
@@ -106,5 +106,5 @@ reinject_initial: false
 # selection pool alongside the current cycle's sequences. 0 = only use the
 # current cycle (default behaviour). When > 0, softmax selection draws from
 # a wider pool, allowing good candidates from earlier cycles to survive.
-n_memory: 20
+n_memory: 0
 

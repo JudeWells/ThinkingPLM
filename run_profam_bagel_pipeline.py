@@ -1291,6 +1291,42 @@ def evaluate_sequences_with_bagel(
 # ---------------------------------------------------------------------------
 
 
+def _pairwise_identity(seq_a: str, seq_b: str) -> float:
+  """Return the fraction of identical residues from a global alignment.
+
+  Uses Biopython's ``PairwiseAligner`` (Needleman–Wunsch) so that
+  insertions and deletions are handled correctly — a single indel no longer
+  shifts all downstream positions and artificially tanks the score.
+
+  The identity is defined as::
+
+      identity = matched_columns / alignment_length
+
+  where *alignment_length* includes gap columns on either side.
+  """
+  from Bio.Align import PairwiseAligner
+
+  if not seq_a or not seq_b:
+    return 0.0
+
+  aligner = PairwiseAligner()
+  aligner.mode = "global"
+  # Standard NW scoring: match +1, mismatch 0, gap open/extend penalties.
+  aligner.match_score = 1.0
+  aligner.mismatch_score = 0.0
+  aligner.open_gap_score = -0.5
+  aligner.extend_gap_score = -0.1
+
+  # We only need the top alignment.
+  alignment = aligner.align(seq_a, seq_b)[0]
+  aln_a, aln_b = alignment[0], alignment[1]
+  aln_len = len(aln_a)
+  if aln_len == 0:
+    return 0.0
+  matches = sum(a == b and a != "-" for a, b in zip(aln_a, aln_b))
+  return matches / aln_len
+
+
 def compute_avg_sequence_similarity(
   generated_seqs: Sequence[str],
   initial_seqs: Sequence[str],
@@ -1300,10 +1336,10 @@ def compute_avg_sequence_similarity(
   the initial input sequences.
 
   For each generated sequence the similarity to each initial sequence is
-  computed as the fraction of matching positions (aligned from position 0;
-  positions beyond the shorter sequence count as mismatches).  The best
-  (maximum) similarity across all initial sequences is kept for each
-  generated sequence, and the mean of those best-match values is returned.
+  computed via global pairwise alignment (Needleman–Wunsch) so that
+  insertions and deletions are properly accounted for.  The best (maximum)
+  similarity across all initial sequences is kept for each generated
+  sequence, and the mean of those best-match values is returned.
   """
   if not generated_seqs or not initial_seqs:
     return 0.0
@@ -1312,14 +1348,7 @@ def compute_avg_sequence_similarity(
   for gen_seq in generated_seqs:
     best = 0.0
     for init_seq in initial_seqs:
-      max_len = max(len(gen_seq), len(init_seq))
-      if max_len == 0:
-        best = max(best, 1.0)
-        continue
-      matches = sum(
-        g == r for g, r in zip(gen_seq, init_seq)
-      )
-      best = max(best, matches / max_len)
+      best = max(best, _pairwise_identity(gen_seq, init_seq))
     best_sims.append(best)
 
   return float(np.mean(best_sims))

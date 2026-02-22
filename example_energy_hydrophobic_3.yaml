@@ -8,15 +8,12 @@
 folding_oracle:
   type: ESMFold
   kwargs:
-    use_modal: false
+    use_modal: true
 
 energies:
-  - type: LISEnergy
+  - type: HydrophobicEnergy
     kwargs:
       weight: 1.0
-      pae_cutoff: 12.0
-      intensive: true
-      target: IPEYVDWRQKGAVTPVKNQGSCGSCWAFSAVVTIEGIIKIRTGNLNEYSEQELLDCDRRSYGCNGGYPWSALQLVAQYGIHYRNTYPYEGVQRYCRSREKGPYAAKTDGVRQVQPYNEGALLYSIANQPVSVVLEAAGKDFQLYRGGIFVGPCGNKVDHAVAAVGYGPNYILIKNSWGTGWGENGYIRIKRGTGNSYGVCGLYTSSFYPVKN
+      mode: "surface"
       residues:
         GEN: "all" #or "all" for all residues
-        B: "all"
