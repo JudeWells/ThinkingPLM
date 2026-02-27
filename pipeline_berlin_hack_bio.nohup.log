@@ -153,3 +153,33 @@ enforce_template=True but no TemplateMatchEnergy found; no positions forced.
 [1AGenerating sequences:  90%|█████████ | 9/10 [00:12<00:01,  1.42s/it]
 [1AGenerating sequences: 100%|██████████| 10/10 [00:14<00:00,  1.42s/it]
 [1AGenerating sequences: 100%|██████████| 10/10 [00:14<00:00,  1.41s/it]
+[checkpoint] Synced 142/142 files (10 cycles) from Modal Volume
+  Avg sequence similarity to initial: 0.8412
+=== Starting cycle 5 / 500 ===
+
+[1AGenerating sequences:   0%|          | 0/10 [00:00<?, ?it/s]
+[1AGenerating sequences:  10%|█         | 1/10 [00:01<00:12,  1.43s/it]
+[1AGenerating sequences:  20%|██        | 2/10 [00:02<00:11,  1.43s/it]
+[1AGenerating sequences:  30%|███       | 3/10 [00:04<00:09,  1.40s/it]
+[1AGenerating sequences:  40%|████      | 4/10 [00:05<00:08,  1.41s/it]
+[1AGenerating sequences:  50%|█████     | 5/10 [00:07<00:07,  1.41s/it]
+[1AGenerating sequences:  60%|██████    | 6/10 [00:08<00:05,  1.40s/it]
+[1AGenerating sequences:  70%|███████   | 7/10 [00:09<00:04,  1.41s/it]
+[1AGenerating sequences:  80%|████████  | 8/10 [00:11<00:02,  1.42s/it]
+[1AGenerating sequences:  90%|█████████ | 9/10 [00:12<00:01,  1.42s/it]
+[1AGenerating sequences: 100%|██████████| 10/10 [00:14<00:00,  1.41s/it]Generating sequences: 100%|██████████| 10/10 [00:14<00:00,  1.41s/it]
+  Avg sequence similarity to initial: 0.8581
+=== Starting cycle 6 / 500 ===
+
+[1AGenerating sequences:   0%|          | 0/10 [00:00<?, ?it/s]
+[1AGenerating sequences:  10%|█         | 1/10 [00:01<00:12,  1.43s/it]
+[1AGenerating sequences:  20%|██        | 2/10 [00:02<00:11,  1.43s/it]
+[1AGenerating sequences:  30%|███       | 3/10 [00:04<00:09,  1.42s/it]
+[1AGenerating sequences:  40%|████      | 4/10 [00:05<00:08,  1.43s/it]
+[1AGenerating sequences:  50%|█████     | 5/10 [00:07<00:07,  1.42s/it]
+[1AGenerating sequences:  60%|██████    | 6/10 [00:08<00:05,  1.43s/it]
+[1AGenerating sequences:  70%|███████   | 7/10 [00:09<00:04,  1.42s/it]
+[1AGenerating sequences:  80%|████████  | 8/10 [00:11<00:02,  1.43s/it]
+[1AGenerating sequences:  90%|█████████ | 9/10 [00:12<00:01,  1.43s/it]
+[1AGenerating sequences: 100%|██████████| 10/10 [00:14<00:00,  1.43s/it]
+[1AGenerating sequences: 100%|██████████| 10/10 [00:14<00:00,  1.43s/it]

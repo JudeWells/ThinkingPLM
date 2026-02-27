@@ -2037,6 +2037,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     # to the /workspace mount point inside the container.
     cfg_dict["_local_repo_root"] = str(ROOT_DIR)
 
+    # Derive a unique run ID from the output directory name.  Each run
+    # gets its own namespace within the shared Modal Volume, so parallel
+    # runs with different configs don't interfere with each other.
+    run_id = cfg.output_dir.name
+    cfg_dict["_run_id"] = run_id
+
     # Clean the local output directory so stale files from a previous run
     # don't get mixed in with the current run's results.
     if cfg.output_dir.exists():
@@ -2044,14 +2050,15 @@ def main(argv: Sequence[str] | None = None) -> None:
       shutil.rmtree(cfg.output_dir)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Clear stale data from the Modal Volume *before* starting the poller,
-    # so it doesn't download results from a previous run.
+    # Clear stale data for *this run* from the Modal Volume before starting
+    # the poller, so it doesn't download results from a previous run with
+    # the same output directory.  Other runs' namespaces are left untouched.
     try:
-      for entry in results_vol.listdir("/"):
+      for entry in results_vol.listdir(f"/{run_id}"):
         results_vol.remove_file(entry.path, recursive=True)
       results_vol.commit()
     except Exception:
-      pass  # Volume may be empty
+      pass  # Namespace may not exist yet
 
     # Background thread that polls the Modal Volume for new checkpoint files
     # written by the remote function, and saves them to the local output dir.
@@ -2063,9 +2070,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     def _sync_volume_to_local() -> None:
       """Download every file listed in the Volume manifest to the local
       output directory.  Called by the poller thread and after the remote
-      function completes."""
+      function completes.  Reads from the run-specific namespace on the
+      Volume (``/<run_id>/...``)."""
       try:
-        manifest_data = b"".join(results_vol.read_file("_manifest.json"))
+        manifest_data = b"".join(results_vol.read_file(f"{run_id}/_manifest.json"))
         manifest = json.loads(manifest_data.decode())
       except Exception:
         return  # manifest not yet written
@@ -2077,7 +2085,7 @@ def main(argv: Sequence[str] | None = None) -> None:
       n_fail = 0
       for rel_path in manifest:
         try:
-          file_data = b"".join(results_vol.read_file(rel_path))
+          file_data = b"".join(results_vol.read_file(f"{run_id}/{rel_path}"))
           local_path = cfg.output_dir / rel_path
           local_path.parent.mkdir(parents=True, exist_ok=True)
           local_path.write_bytes(file_data)
@@ -2127,6 +2135,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     _poll_last_manifest_len[0] = 0  # force full re-download
     _sync_volume_to_local()
     print("[final] Local output directory is up to date.")
+
+    # Clean up this run's namespace from the Volume so it doesn't
+    # accumulate stale data across runs.
+    try:
+      for entry in results_vol.listdir(f"/{run_id}"):
+        results_vol.remove_file(entry.path, recursive=True)
+      results_vol.commit()
+    except Exception:
+      pass
   else:
     run_pipeline(cfg)
 

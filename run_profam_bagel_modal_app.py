@@ -174,6 +174,10 @@ def run_pipeline_modal(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
   a persistent Volume every ``output_frequency`` cycles.  The local caller
   polls the Volume in a background thread to download new files as they
   appear.
+
+  Each run is namespaced within the shared Volume by a ``_run_id`` key
+  (derived from the output directory name).  This allows multiple runs
+  with different configs to execute in parallel without interfering.
   """
   import json
 
@@ -183,14 +187,16 @@ def run_pipeline_modal(cfg_dict: Dict[str, Any]) -> Dict[str, Any]:
 
   cfg = _reconstruct_config(cfg_dict)
 
-  # Clear stale checkpoint files from any previous run.
-  vol_root = Path(_VOL_MOUNT)
+  # Each run is namespaced under its own subdirectory on the volume so
+  # that parallel runs don't interfere with each other.
+  run_id = cfg_dict.get("_run_id", "default")
+  vol_root = Path(_VOL_MOUNT) / run_id
+
+  # Clear stale checkpoint files from any previous run *with the same run_id*.
   import shutil
-  for child in vol_root.iterdir():
-    if child.is_file():
-      child.unlink()
-    elif child.is_dir():
-      shutil.rmtree(child)
+  if vol_root.exists():
+    shutil.rmtree(vol_root)
+  vol_root.mkdir(parents=True, exist_ok=True)
   results_vol.commit()
 
   def on_checkpoint(results: Dict[str, Any]) -> None:
