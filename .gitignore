@@ -4,3 +4,5 @@ Miniconda3-*.sh
 outputs/
 OLD_SIMU/*
 .profam_repo/
+*.log
+

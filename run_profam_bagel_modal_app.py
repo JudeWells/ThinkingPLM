@@ -147,6 +147,7 @@ def _reconstruct_config(cfg_dict: Dict[str, Any]):
 
   data = dict(cfg_dict)
   local_repo_root = data.pop("_local_repo_root", None)
+  data.pop("_run_id", None)
   for key in ("initial_fasta", "profam_checkpoint_dir", "energy_config", "output_dir"):
     if key in data and data[key] is not None:
       path_str = str(data[key])
