@@ -109,11 +109,20 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# 5. Install ProFam from GitHub
+# 5. Install ProFam from GitHub (editable mode to include all submodules)
 # -------------------------------------------------------------------------
 echo ""
 echo "Installing ProFam from GitHub..."
-pip install "git+https://github.com/alex-hh/profam.git"
+# Clone and install in editable mode because pip install from git misses src.sequence
+PROFAM_DIR="${SCRIPT_DIR}/.profam_repo"
+if [[ -d "${PROFAM_DIR}" ]]; then
+  echo "  ProFam repo already cloned, pulling latest..."
+  git -C "${PROFAM_DIR}" pull --quiet
+else
+  echo "  Cloning ProFam repository..."
+  git clone --quiet https://github.com/alex-hh/profam.git "${PROFAM_DIR}"
+fi
+pip install -e "${PROFAM_DIR}"
 
 # Additional ProFam runtime dependencies not in its setup.py
 pip install \

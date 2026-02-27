@@ -25,7 +25,7 @@ profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
 profam_sampler: single
 
 # Number of sequences generated per ProFam call (N_output).
-profam_num_samples: 10
+profam_num_samples: 3
 
 # Maximum tokens passed to ProFam for sampling (see ProFam docs).
 profam_max_tokens: 8192
