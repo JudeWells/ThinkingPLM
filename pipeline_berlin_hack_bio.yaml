@@ -25,7 +25,7 @@ profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
 profam_sampler: single
 
 # Number of sequences generated per ProFam call (N_output).
-profam_num_samples: 3
+profam_num_samples: 10
 
 # Maximum tokens passed to ProFam for sampling (see ProFam docs).
 profam_max_tokens: 8192
@@ -45,7 +45,7 @@ profam_top_p: 0.95
 
 # YAML file specifying the folding oracle and energy terms. See
 # `example_energy_template_match.yaml` for a TemplateMatchEnergy example.
-energy_config: example_energy_lis_binding_1.yaml
+energy_config: example_energy_lis_2GDZ.yaml
 
 
 # -----------------------------------------------------------------------------
@@ -59,7 +59,7 @@ f_inject: 0.2
 max_cycles: 10
 
 # Where all outputs (logs, structures, plots) will be stored.
-output_dir: outputs/example_lis_binding_1
+output_dir: outputs/2GDZ
 
 # Temperature used when converting energies into sampling probabilities
 # via softmax(-E / softmax_temperature).

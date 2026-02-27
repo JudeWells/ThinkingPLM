@@ -22,14 +22,14 @@
             // "python": "/home/judewells/miniconda3/envs/profam_bagel/bin/python"
         },
         {
-            "name": "Run Pipeline Config 1 LOCAL",
+            "name": "Run Pipeline Config 1 2GDZ",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/run_profam_bagel_pipeline.py",
-            "args": ["--config", "pipeline_config_1.yaml"],
+            "args": ["--config", "pipeline_berlin_hack_bio.yaml"],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             // "python": "/home/judewells/miniconda3/envs/profam_bagel/bin/python"
-        },
+        }
     ]
 }
