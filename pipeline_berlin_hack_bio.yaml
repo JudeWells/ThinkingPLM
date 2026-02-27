@@ -56,10 +56,10 @@ energy_config: example_energy_lis_2GDZ.yaml
 f_inject: 0.2
 
 # Number of cycles to run.
-max_cycles: 10
+max_cycles: 500
 
 # Where all outputs (logs, structures, plots) will be stored.
-output_dir: outputs/2GDZ
+output_dir: outputs/2GDZ_default_initial_esm_score_500_cycles
 
 # Temperature used when converting energies into sampling probabilities
 # via softmax(-E / softmax_temperature).
