@@ -51,7 +51,7 @@ image = (
   .apt_install("git")
   .pip_install(
     # BAGEL (biobagel) — includes biotite, boileroom, numpy, pandas, pydantic, matplotlib
-    "biobagel[local] @ git+https://github.com/softnanolab/bagel.git",
+    "biobagel[local] @ git+https://github.com/JudeWells/bagel.git@9bd0fb1",
     # Additional dependencies not pulled by the above
     "transformers>=4.49.0,<5.0.0",
     "tokenizers",
@@ -69,12 +69,20 @@ image = (
     "modal",
     "pyyaml",
   )
+  # Boltz has a hard numpy<2.0 pin but works fine with numpy 2.x at runtime.
+  # Install with --no-deps to avoid the conflict with BAGEL's numpy>=2.2.0,
+  # then install its missing deps (many are already present from BAGEL/ProFam).
+  .run_commands(
+    "pip install boltz --no-deps"
+    " && pip install rdkit-pypi einops einx dm-tree fairscale gemmi"
+    " mashumaro modelcif chembl-structure-pipeline types-requests wandb"
+  )
   # ProFam's setup.py uses find_packages(), but several sub-packages
   # (src/sequence, src/evaluators, src/pipelines) are missing __init__.py
   # so a plain pip install skips them.  We clone the repo, add the missing
   # files, then install so that all sub-packages are included.
   .run_commands(
-    "git clone --depth 1 https://github.com/alex-hh/profam.git /tmp/profam"
+    "git clone --depth 1 https://github.com/JudeWells/profam_batched.git /tmp/profam"
     " && touch /tmp/profam/src/sequence/__init__.py"
     "         /tmp/profam/src/evaluators/__init__.py"
     "         /tmp/profam/src/pipelines/__init__.py"
@@ -101,10 +109,14 @@ image = (
     ignore=[
       "profam/",
       "bagel/",
+      "bagel_patches/",
       "model_checkpoints",
       "outputs/",
       ".git/",
+      ".claude/",
       "__pycache__/",
+      "*.log",
+      "*.nohup.log",
     ],
   )
 )

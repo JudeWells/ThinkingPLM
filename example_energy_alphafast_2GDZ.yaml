@@ -1,0 +1,28 @@
+## Example energy configuration: AlphaFast + ipSAE + iPTM (multi-chain binding)
+##
+## This config uses AlphaFast (AlphaFold3 via Modal) to fold the generated
+## sequence together with the 15-PGDH target (PDB 2GDZ) and scores the
+## interface using ipSAE (from PAE matrix) and iPTM (from chain-pair iPTM).
+##
+## AlphaFast predictions are more expensive (~$0.035/prediction, ~28s) but
+## significantly more accurate for protein-protein interface prediction
+## than ESMFold.
+
+folding_oracle:
+  type: AlphaFast
+  kwargs:
+    model_seeds: [1]
+
+energies:
+  - type: ipSAEEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 10.0
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+
+  - type: iPTMEnergy
+    kwargs:
+      weight: 0.5

@@ -68,7 +68,10 @@ echo "Python version: $(python --version)"
 # -------------------------------------------------------------------------
 echo ""
 echo "Installing BAGEL (biobagel) from GitHub..."
-pip install "biobagel[local] @ git+https://github.com/softnanolab/bagel.git"
+pip install "biobagel[local] @ git+https://github.com/JudeWells/bagel.git"
+# Pin transformers to 4.x — the 5.x series introduces MoE config attributes
+# (_experts_implementation_internal) that break ProFam's LlamaConfig loading.
+pip install "transformers>=4.49.0,<5.0.0"
 
 # -------------------------------------------------------------------------
 # 4. Install PyTorch with matching torchvision/torchaudio
@@ -120,7 +123,7 @@ if [[ -d "${PROFAM_DIR}" ]]; then
   git -C "${PROFAM_DIR}" pull --quiet
 else
   echo "  Cloning ProFam repository..."
-  git clone --quiet https://github.com/alex-hh/profam.git "${PROFAM_DIR}"
+  git clone --quiet https://github.com/JudeWells/profam_batched.git "${PROFAM_DIR}"
 fi
 pip install -e "${PROFAM_DIR}"
 
@@ -144,7 +147,8 @@ echo "Installing pipeline utilities..."
 
 pip install \
   "pyyaml" \
-  "modal"
+  "modal" \
+  "boltz"
 
 # -------------------------------------------------------------------------
 # 7. Verify key imports work
@@ -211,6 +215,10 @@ print('OK')
 
 print('Checking pyyaml...', end=' ')
 import yaml
+print('OK')
+
+print('Checking boltz...', end=' ')
+import boltz
 print('OK')
 
 print()

@@ -87,6 +87,7 @@ except ImportError as e:  # pragma: no cover - import-time check
 # BAGEL — installed via: pip install git+https://github.com/softnanolab/bagel.git
 import bagel as bg  # type: ignore
 from bagel.oracles import ESMFold  # type: ignore
+from bagel.oracles.folding import FoldingOracle, AlphaFast, Boltz  # type: ignore
 from bagel.oracles.folding.utils import sequence_from_atomarray  # type: ignore
 from bagel.utils import get_atomarray_in_residue_range  # type: ignore
 
@@ -124,6 +125,7 @@ class PipelineConfig:
   profam_max_generated_length: int | None = None
   profam_temperature: float | None = None
   profam_top_p: float | None = 0.95
+  profam_generation_batch_size: int | None = None  # defaults to profam_num_samples
 
   energy_config: Path = Path("energy.yaml")
 
@@ -187,6 +189,11 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
       None
       if pick("profam_top_p", None) is None
       else float(pick("profam_top_p"))
+    ),
+    profam_generation_batch_size=(
+      None
+      if pick("profam_generation_batch_size", None) is None
+      else int(pick("profam_generation_batch_size"))
     ),
     energy_config=_to_path(pick("energy_config")),
     f_inject=float(pick("f_inject", 0.5)),
@@ -271,6 +278,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     "--profam_top_p",
     type=float,
     help="Nucleus sampling probability mass (optional).",
+  )
+  p.add_argument(
+    "--profam_generation_batch_size",
+    type=int,
+    help="Batch size for parallel sequence generation (default: profam_num_samples).",
   )
 
   # Pipeline controls.
@@ -514,6 +526,11 @@ def run_profam_generation(
       sampling_kwargs["top_p"] = cfg.profam_top_p
     if cfg.profam_temperature is not None:
       sampling_kwargs["temperature"] = cfg.profam_temperature
+    # Enable batched generation: generate all samples in parallel batches
+    # rather than one-at-a-time.  Defaults batch size to profam_num_samples.
+    gen_batch_size = cfg.profam_generation_batch_size or cfg.profam_num_samples
+    sampling_kwargs["batch_generation"] = True
+    sampling_kwargs["generation_batch_size"] = gen_batch_size
     sampler_obj = ProFamSampler(
       name="single_sampler",
       model=model,
@@ -724,21 +741,29 @@ def _load_structure_from_spec(kwargs: Dict[str, Any]) -> Any:
   return None, False
 
 
-def build_folding_oracle(energy_cfg: Dict[str, Any], force_modal: bool = False) -> ESMFold:
+def build_folding_oracle(energy_cfg: Dict[str, Any], force_modal: bool = False) -> FoldingOracle:
   folding_cfg = energy_cfg.get("folding_oracle", {}) or {}
   oracle_type = folding_cfg.get("type", "ESMFold")
-  if oracle_type != "ESMFold":
-    raise ValueError(
-      f"Only ESMFold folding oracle is currently supported, got type={oracle_type!r}"
-    )
   kwargs = folding_cfg.get("kwargs", {}) or {}
   if not isinstance(kwargs, dict):
     raise ValueError("folding_oracle.kwargs must be a dictionary.")
-  if force_modal:
-    # Override to make sure the folding oracle itself uses Modal,
-    # regardless of what is specified in the energy config.
-    kwargs["use_modal"] = True
-  return ESMFold(**kwargs)
+  if oracle_type == "ESMFold":
+    if force_modal:
+      # Override to make sure the folding oracle itself uses Modal,
+      # regardless of what is specified in the energy config.
+      kwargs["use_modal"] = True
+    return ESMFold(**kwargs)
+  elif oracle_type == "AlphaFast":
+    # AlphaFast always runs on Modal — force_modal is implicit
+    return AlphaFast(**kwargs)
+  elif oracle_type == "Boltz":
+    # Boltz runs locally via CLI subprocess
+    return Boltz(**kwargs)
+  else:
+    raise ValueError(
+      f"Unsupported folding oracle type: {oracle_type!r}. "
+      f"Use 'ESMFold', 'AlphaFast', or 'Boltz'."
+    )
 
 
 def parse_residue_range_string(spec: str) -> List[int]:
@@ -964,7 +989,7 @@ def _convert_residue_spec_for_chains(
 
 def build_energy_terms_for_chain(
   energy_cfg: Dict[str, Any],
-  oracle: ESMFold,
+  oracle: FoldingOracle,
   chain: bg.Chain,
   target_chains: Dict[int, "bg.Chain"] | None = None,
 ) -> List[bg.energies.EnergyTerm]:
@@ -1165,7 +1190,7 @@ def extract_fixed_residues_from_energy_config(
 def evaluate_sequences_with_bagel(
   sequences: Sequence[str],
   energy_cfg: Dict[str, Any],
-  folding_oracle: ESMFold,
+  folding_oracle: FoldingOracle,
   cycle_index: int,
   cycle_dir: Path,
   enforce_template: bool = True,
@@ -1192,10 +1217,10 @@ def evaluate_sequences_with_bagel(
   # Pre-scan energy config for entries that require a target chain.
   target_seqs = _collect_target_sequences(energy_cfg)
 
-  energies: List[float] = []
-  details: List[Dict[str, Any]] = []
-  folding_results: List[Any] = []
-
+  # ------------------------------------------------------------------
+  # Phase 1: Build chains and energy terms for every sequence.
+  # ------------------------------------------------------------------
+  per_seq_data: List[Dict[str, Any]] = []
   for idx, seq in enumerate(sequences):
     residues = [
       bg.Residue(name=aa, chain_ID="GEN", index=i, mutable=False)
@@ -1204,9 +1229,8 @@ def evaluate_sequences_with_bagel(
     chain = bg.Chain(residues=residues)
 
     # Build target chains for energy entries that have a "target" key.
-    # Each target uses the chain_ID derived from the residues dict.
     target_chains_map: Dict[int, bg.Chain] = {}
-    seen_targets: Dict[Tuple[str, str], bg.Chain] = {}  # de-duplicate
+    seen_targets: Dict[Tuple[str, str], bg.Chain] = {}
     for entry_idx, (tgt_seq, tgt_chain_id) in target_seqs.items():
       dedup_key = (tgt_seq, tgt_chain_id)
       if dedup_key in seen_targets:
@@ -1225,19 +1249,61 @@ def evaluate_sequences_with_bagel(
       target_chains=target_chains_map if target_chains_map else None,
     )
 
-    # Determine which unique oracles are needed by the energy terms and
-    # call each one.  This mirrors the approach in State.energy and ensures
-    # the folding oracle is only invoked when at least one energy term
-    # actually requires a predicted structure.
-    #
-    # When target chains are present, the oracle receives all chains so
-    # that it folds the multi-chain complex.
     all_chains = [chain] + list({id(c): c for c in target_chains_map.values()}.values())
     oracles_needed = list(set(term.oracle for term in energy_terms))
+
+    per_seq_data.append({
+      "chain": chain,
+      "all_chains": all_chains,
+      "energy_terms": energy_terms,
+      "oracles_needed": oracles_needed,
+    })
+
+  # ------------------------------------------------------------------
+  # Phase 2: Batch-predict structures for all sequences at once.
+  #
+  # If the folding oracle supports predict_batch (e.g. Boltz) and every
+  # sequence needs it, we call it once instead of N times.  This loads
+  # the model once and processes all inputs sequentially, saving ~30 s
+  # of model-load overhead per additional sequence.
+  # ------------------------------------------------------------------
+
+  # Check which sequences need a folding oracle.
+  needs_folding = [
+    any(isinstance(o, FoldingOracle) for o in d["oracles_needed"])
+    for d in per_seq_data
+  ]
+  batch_folding_results: List[Any] = [None] * len(sequences)
+
+  if any(needs_folding) and hasattr(folding_oracle, "predict_batch"):
+    # Collect the chain-lists that need folding.
+    batch_indices = [i for i, nf in enumerate(needs_folding) if nf]
+    batch_chains = [per_seq_data[i]["all_chains"] for i in batch_indices]
+    batch_results = folding_oracle.predict_batch(batch_chains)
+    for i, result in zip(batch_indices, batch_results):
+      batch_folding_results[i] = result
+
+  # ------------------------------------------------------------------
+  # Phase 3: Compute energies using the (pre-computed) oracle results.
+  # ------------------------------------------------------------------
+  energies: List[float] = []
+  details: List[Dict[str, Any]] = []
+  folding_results: List[Any] = []
+
+  for idx, seq in enumerate(sequences):
+    d = per_seq_data[idx]
+    energy_terms = d["energy_terms"]
+
     oracles_result = OraclesResultDict()
     folding_result = None
-    for oracle in oracles_needed:
-      result = oracle.predict(chains=all_chains)
+
+    for oracle in d["oracles_needed"]:
+      if isinstance(oracle, FoldingOracle) and batch_folding_results[idx] is not None:
+        # Use the pre-computed batch result.
+        result = batch_folding_results[idx]
+      else:
+        # Non-folding oracle or no batch result — call sequentially.
+        result = oracle.predict(chains=d["all_chains"])
       oracles_result[oracle] = result
       if isinstance(oracle, FoldingOracle):
         folding_result = result
@@ -1273,8 +1339,6 @@ def evaluate_sequences_with_bagel(
     )
 
   # Save structures for sequences where the folding oracle was called.
-  # When no energy term required a FoldingOracle, folding_results will
-  # contain only None entries and no structures need to be written.
   if any(fr is not None for fr in folding_results):
     structures_dir = cycle_dir / f"sequences_cycle_all_{cycle_index}"
     structures_dir.mkdir(parents=True, exist_ok=True)

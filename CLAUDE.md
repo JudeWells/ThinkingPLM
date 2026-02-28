@@ -82,6 +82,67 @@ For binding design, energy configs specify multiple chains with residue ranges:
 - **PDB caching**: structures cached in `~/.cache/profam_bagel/pdb/`
 - **Residue spec notation**: `"0-43"`, `"1,2,5"`, `"0-5,10,20-25"`, `"all"`
 
+## BAGEL Energy System Internals
+
+Energy terms live in the BAGEL library (installed package at `bagel/energies.py`, ~1300 lines). Understanding this is critical for adding new scoring functions.
+
+**Class hierarchy:** `Oracle` → produces `OracleResult` → consumed by `EnergyTerm.compute()`
+
+**Oracle types:**
+- `FoldingOracle` (abstract) → `ESMFold` (concrete). Returns `FoldingResult` with `structure`, `local_plddt`, `ptm`, `pae`
+- `EmbeddingOracle` (abstract) → `ESM2` (concrete). Returns `EmbeddingResult` with `embeddings`
+
+**EnergyTerm base class** (ABC):
+- `compute(oracles_result: OraclesResultDict) -> tuple[float, float]` — returns `(unweighted, weighted)` energy
+- `oracle` attribute — which oracle this term needs
+- `residue_groups` — target residues as `ResidueGroup = tuple[chain_ids_array, res_indices_array]`
+- `weight` — multiplicative weight
+
+**Existing energy terms:** PTMEnergy, PLDDTEnergy, OverallPLDDTEnergy, LISEnergy, PAEEnergy, TemplateMatchEnergy, SurfaceAreaEnergy, HydrophobicEnergy, FlexEvoBindEnergy, SeparationEnergy, RingSymmetryEnergy, GlobularEnergy, SecondaryStructureEnergy, EmbeddingsSimilarityEnergy, ChemicalPotentialEnergy
+
+**Pipeline integration** (`run_profam_bagel_pipeline.py`):
+- `build_folding_oracle()` — instantiates oracle from energy YAML `folding_oracle.type`
+- `build_energy_terms_for_chain()` — instantiates each energy term from `energies` list, injects `oracle`, converts `residues` specs to `bg.Residue` objects
+- `evaluate_sequences_with_bagel()` — folds each sequence, calls `energy_term.compute()`, sums weighted energies
+
+**To add a new oracle type**, create a subclass of `FoldingOracle` with a `fold()` method returning a result with the needed metrics, then create `EnergyTerm` subclasses that consume those metrics.
+
+## Current Branch: 15-PGDH Binder Design (`add-alphafast`)
+
+### Challenge Context
+
+This branch targets the Berlin Bio x AI Hackathon challenge: designing protein binders against **15-PGDH** (15-Hydroxyprostaglandin Dehydrogenase), an NAD+-dependent enzyme that degrades PGE2. 15-PGDH activity rises with age, accelerating PGE2 degradation and contributing to decline in muscle, brain, and joint tissue. It was identified as a "gerozyme" by Stanford's Blau Lab. Inhibiting 15-PGDH rejuvenates aged muscle stem cells, restores neuromuscular junctions, and repairs joint cartilage in preclinical models. Epirium Bio's small-molecule inhibitor MF-300 completed Phase 1 trials (Sept 2025), but no protein-based therapeutics exist. There are zero FDA-approved drugs for sarcopenia (>50M affected globally).
+
+**Design targets:** NAD+ binding pocket (active site), homodimer interface (allosteric), or surface epitopes. Max sequence length: 250 aa.
+
+**Target PDB structures:** 9PFL (multimer), 2GDZ (monomer)
+
+### Working Configuration
+
+`pipeline_berlin_hairpin_start.yaml` — uses ESMFold on Modal with LISEnergy against the 2GDZ target sequence. Energy config: `example_energy_lis_2GDZ.yaml`.
+
+### Planned New Energy Functions
+
+The goal is to add scoring based on higher-accuracy structure predictors beyond ESMFold:
+
+**AlphaFast** (https://github.com/RomeroLab/alphafast) — GPU-accelerated AlphaFold3:
+- Replaces CPU Jackhmmer with GPU MMseqs2, ~23x faster end-to-end
+- Outputs: iPTM, pTM, pLDDT (per-atom), PAE matrix, ranking_score, CIF structures
+- Runs via Modal serverless (~$0.035/prediction, ~28s) or Docker locally
+- Input: AF3 JSON format with sequences and modelSeeds
+- Requires AF3 model weights from Google DeepMind (request needed)
+- Key scores for binding: `chain_pair_iptm` matrix (off-diagonal = interface quality)
+
+**ipSAE** (https://github.com/DunbrackLab/IPSAE) — improved interface scoring:
+- Computes ipSAE score from PAE matrix + structure coordinates (numpy only, CPU)
+- More reliable than standard iPTM for evaluating protein-protein interfaces
+- Takes AF2/AF3/Boltz output (PAE JSON + CIF) as input
+- Threshold: ipSAE > 0.6 suggests likely binding
+- Also computes: pDockQ, pDockQ2, LIS, per-residue contributions
+- Usage: `python ipsae.py <pae_file> <structure_file> <pae_cutoff> <dist_cutoff>`
+
+**Integration approach:** New energy terms should ideally be added to the BAGEL library (new oracle for AlphaFast, new energy terms for ipSAE/iPTM). The pipeline's `build_folding_oracle()` and `build_energy_terms_for_chain()` already support dynamic dispatch by type name from YAML config.
+
 ## Dependencies
 
 BAGEL and ProFam have conflicting pins for numpy, matplotlib, and transformers. The setup script installs BAGEL first (stricter pins), then ProFam in editable mode. ProFam is cloned into `.profam_repo/`.

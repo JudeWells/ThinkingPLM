@@ -1,0 +1,22 @@
+## Energy configuration: Boltz + ipSAE scoring (multi-chain binding)
+##
+## Folds the generated sequence together with the 15-PGDH target (2GDZ)
+## using Boltz and scores the interface with ipSAE.
+##
+## Boltz runs locally via CLI (requires 'boltz' installed and GPU).
+## ipSAE uses the PAE matrix from Boltz (same as ESMFold but typically
+## more accurate for protein-protein interfaces).
+
+folding_oracle:
+  type: Boltz
+  kwargs: {}
+
+energies:
+  - type: ipSAEEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 10.0
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
