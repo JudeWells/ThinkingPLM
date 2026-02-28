@@ -1,0 +1,30 @@
+## Campaign 4: Hairpin + pure ipSAE (no MPNN, fastest per cycle)
+##
+## Uses existing hairpin sequence with only ipSAE scoring (no MPNN
+## overhead). Fastest cycles since no cross-container Modal call.
+## Very aggressive selection (softmax_T=0.005) to drive rapid
+## convergence on binding quality.
+
+initial_fasta: initial_sequence_hairpin.fasta
+
+profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
+profam_sampler: single
+profam_num_samples: 8
+profam_max_tokens: 8192
+profam_max_generated_length: null
+profam_temperature: 0.6
+profam_top_p: 0.95
+
+energy_config: example_energy_boltz_ipsae_2GDZ.yaml
+
+f_inject: 0.25
+max_cycles: 200
+output_dir: outputs/campaign4_hairpin_pure_ipsae
+softmax_temperature: 0.005
+random_seed: 444444
+run_on_modal: true
+output_frequency: 1
+enforce_template: true
+sample_with_reinsertion: false
+reinject_initial: false
+n_memory: 0

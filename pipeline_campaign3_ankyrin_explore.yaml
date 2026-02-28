@@ -1,0 +1,29 @@
+## Campaign 3: Ankyrin repeat scaffold + exploration mode
+##
+## DARPin-like 80aa scaffold. High f_inject (0.4) and warmer
+## softmax_temperature (0.05) encourage exploration of more
+## diverse sequence space before converging.
+
+initial_fasta: initial_sequence_ankyrin_repeat.fasta
+
+profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
+profam_sampler: single
+profam_num_samples: 8
+profam_max_tokens: 8192
+profam_max_generated_length: null
+profam_temperature: 0.8
+profam_top_p: 0.95
+
+energy_config: example_energy_boltz_ipsae_mpnn_2GDZ.yaml
+
+f_inject: 0.4
+max_cycles: 100
+output_dir: outputs/campaign3_ankyrin_explore
+softmax_temperature: 0.05
+random_seed: 333333
+run_on_modal: true
+output_frequency: 1
+enforce_template: true
+sample_with_reinsertion: true
+reinject_initial: true
+n_memory: 0

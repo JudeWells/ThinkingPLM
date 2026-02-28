@@ -25,6 +25,6 @@ energies:
 
   - type: SolMPNNPerplexityEnergy
     kwargs:
-      weight: 0.3
+      weight: 0.1
       residues:
         GEN: "all"
