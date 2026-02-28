@@ -1,0 +1,30 @@
+## Energy configuration: Boltz + ipSAE + SolubleMPNN perplexity scoring
+##
+## Folds the generated sequence together with the 15-PGDH target (2GDZ)
+## using Boltz, scores the interface with ipSAE, and evaluates
+## designability with SolubleMPNN perplexity.
+##
+## Boltz runs locally/on-Modal for folding.
+## ipSAE uses the PAE matrix from Boltz for interface quality.
+## SolMPNNPerplexityEnergy calls a separate Modal app (proteinmpnn-scorer)
+## to score the GEN chain's sequence-backbone compatibility.
+
+folding_oracle:
+  type: Boltz
+  kwargs: {}
+
+energies:
+  - type: ipSAEEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 10.0
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+
+  - type: SolMPNNPerplexityEnergy
+    kwargs:
+      weight: 0.3
+      residues:
+        GEN: "all"

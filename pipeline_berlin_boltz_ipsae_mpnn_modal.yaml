@@ -1,0 +1,34 @@
+## Pipeline config: Boltz + ipSAE + SolubleMPNN perplexity on Modal.
+##
+## Uses Boltz for structure prediction, ipSAE for interface scoring,
+## and SolubleMPNN for designability scoring of the GEN chain.
+##
+## Requires:
+##   modal deploy modal_proteinmpnn_score.py   (deploy MPNN scorer first)
+##
+## Usage:
+##   python run_profam_bagel_pipeline.py --config pipeline_berlin_boltz_ipsae_mpnn_modal.yaml
+
+initial_fasta: initial_sequence_hairpin.fasta
+
+profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
+profam_sampler: single
+profam_num_samples: 4
+profam_max_tokens: 8192
+profam_max_generated_length: null
+profam_temperature: 0.8
+profam_top_p: 0.95
+
+energy_config: example_energy_boltz_ipsae_mpnn_2GDZ.yaml
+
+f_inject: 0.25
+max_cycles: 200
+output_dir: outputs/2GDZ_boltz_ipsae_mpnn_modal
+softmax_temperature: 0.01
+random_seed: 297482572
+run_on_modal: true
+output_frequency: 1
+enforce_template: true
+sample_with_reinsertion: false
+reinject_initial: false
+n_memory: 0

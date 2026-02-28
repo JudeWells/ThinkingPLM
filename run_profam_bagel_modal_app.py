@@ -51,7 +51,7 @@ image = (
   .apt_install("git")
   .pip_install(
     # BAGEL (biobagel) — includes biotite, boileroom, numpy, pandas, pydantic, matplotlib
-    "biobagel[local] @ git+https://github.com/JudeWells/bagel.git@9bd0fb1",
+    "biobagel[local] @ git+https://github.com/JudeWells/bagel.git@20e77d0",
     # Additional dependencies not pulled by the above
     "transformers>=4.49.0,<5.0.0",
     "tokenizers",
