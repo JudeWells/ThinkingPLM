@@ -5,4 +5,4 @@ outputs/
 OLD_SIMU/*
 .profam_repo/
 *.log
-
+outputs_no_elitism/

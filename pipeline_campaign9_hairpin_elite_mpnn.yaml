@@ -1,0 +1,30 @@
+## Campaign 9: Hairpin scaffold + elitism + ipSAE + MPNN
+##
+## 80aa hairpin with elitism enabled. Scores both interface
+## quality (ipSAE) and designability (SolubleMPNN perplexity).
+
+initial_fasta: initial_sequence_hairpin.fasta
+
+profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
+profam_sampler: single
+profam_num_samples: 8
+profam_max_tokens: 8192
+profam_max_generated_length: null
+profam_temperature: 0.8
+profam_top_p: 0.95
+
+energy_config: example_energy_boltz_ipsae_mpnn_2GDZ.yaml
+
+f_inject: 0.25
+max_cycles: 200
+output_dir: outputs/campaign9_hairpin_elite_mpnn
+softmax_temperature: 0.01
+random_seed: 999999
+run_on_modal: true
+output_frequency: 1
+enforce_template: true
+sample_with_reinsertion: false
+reinject_initial: false
+n_memory: 0
+elitism: true
+accept_only_improvement: true

@@ -67,7 +67,7 @@ import argparse
 import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -140,6 +140,10 @@ class PipelineConfig:
   sample_with_reinsertion: bool = True
   reinject_initial: bool = True
   n_memory: int = 0
+  elitism: bool = False
+  accept_only_improvement: bool = False
+  annealing_initial_temp: float | None = None
+  annealing_decay: float = 0.95
 
 
 def _to_path(x: Any) -> Path:
@@ -207,6 +211,14 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     sample_with_reinsertion=bool(pick("sample_with_reinsertion", True)),
     reinject_initial=bool(pick("reinject_initial", True)),
     n_memory=int(pick("n_memory", 0)),
+    elitism=bool(pick("elitism", False)),
+    accept_only_improvement=bool(pick("accept_only_improvement", False)),
+    annealing_initial_temp=(
+      None
+      if pick("annealing_initial_temp", None) is None
+      else float(pick("annealing_initial_temp"))
+    ),
+    annealing_decay=float(pick("annealing_decay", 0.95)),
   )
 
   if not 0.0 < cfg.f_inject <= 1.0:
@@ -360,6 +372,43 @@ def build_arg_parser() -> argparse.ArgumentParser:
       "0 = only use the current cycle (default). When > 0, sequences from "
       "up to the last n_memory cycles are pooled together before softmax "
       "selection, allowing good candidates from earlier cycles to survive."
+    ),
+  )
+  p.add_argument(
+    "--elitism",
+    type=str,
+    default=None,
+    help=(
+      "If true, track the global best sequence (lowest energy ever seen) "
+      "and guarantee it a slot at position 0 in the injection set each cycle."
+    ),
+  )
+  p.add_argument(
+    "--accept_only_improvement",
+    type=str,
+    default=None,
+    help=(
+      "If true, only swap the injection set when the new candidate set's "
+      "best energy improves over the previous cycle's injection set."
+    ),
+  )
+  p.add_argument(
+    "--annealing_initial_temp",
+    type=float,
+    default=None,
+    help=(
+      "Initial temperature for simulated annealing when accept_only_improvement "
+      "is true. If set, worse swaps are accepted with probability exp(-delta/T). "
+      "Temperature decays each cycle by annealing_decay."
+    ),
+  )
+  p.add_argument(
+    "--annealing_decay",
+    type=float,
+    default=None,
+    help=(
+      "Decay factor for simulated annealing temperature each cycle "
+      "(default 0.95). Only used when annealing_initial_temp is set."
     ),
   )
 
@@ -1520,6 +1569,11 @@ def update_cycle_log(
   pool_energies: Sequence[float] | None = None,
   pool_names: Sequence[str] | None = None,
   pool_seqs: Sequence[str] | None = None,
+  swap_accepted: bool | None = None,
+  swap_reason: str | None = None,
+  elite_energy: float | None = None,
+  elite_cycle: int | None = None,
+  annealing_temp: float | None = None,
 ) -> None:
   """
   Append / update a JSON log keyed by cycle index.
@@ -1639,6 +1693,17 @@ def update_cycle_log(
     cycle_entry["pool_size"] = len(pool_ids)
   if avg_similarity is not None:
     cycle_entry["all_avg_similarity"] = avg_similarity
+  if swap_accepted is not None:
+    cycle_entry["swap_accepted"] = swap_accepted
+  if swap_reason is not None:
+    cycle_entry["swap_reason"] = swap_reason
+  if elite_energy is not None:
+    cycle_entry["global_elite"] = {
+      "energy": _json_safe(elite_energy),
+      "from_cycle": elite_cycle,
+    }
+  if annealing_temp is not None:
+    cycle_entry["annealing_temp"] = annealing_temp
 
   log_data[str(cycle_index)] = cycle_entry
 
@@ -1694,6 +1759,7 @@ def make_energy_summary_plot(
   """
   try:
     import matplotlib.pyplot as plt  # type: ignore
+    plt.style.use("dark_background")
   except ImportError:
     # Plotting is optional; skip gracefully if matplotlib is not available.
     print("matplotlib not available, skipping summary plot.")
@@ -1714,9 +1780,31 @@ def make_energy_summary_plot(
   avg = [log_data[str(c)].get("all_avg_energy", log_data[str(c)].get("avg_energy")) for c in cycles]
   min_e = [log_data[str(c)].get("all_min_energy", log_data[str(c)].get("min_energy")) for c in cycles]
 
+  # Compute cumulative minimum (global best seen so far).
+  cum_min = []
+  running_min = float("inf")
+  for e in min_e:
+    if e is not None and e < running_min:
+      running_min = e
+    cum_min.append(running_min if running_min != float("inf") else e)
+
   fig, ax = plt.subplots(figsize=(7, 4))
-  ax.plot(cycles, avg, marker="o", label="Average energy (all generated)")
-  ax.plot(cycles, min_e, marker="s", label="Minimum energy (all generated)")
+  ax.plot(cycles, avg, marker="o", color="#00bfff", label="Average energy (all generated)")
+  ax.plot(cycles, min_e, marker="s", color="#00e676", label="Minimum energy (all generated)")
+  ax.plot(cycles, cum_min, linestyle="--", color="#ff6b6b", linewidth=1.5, label="Global best (cumulative min)")
+
+  # Mark rejected swaps with X markers if data available.
+  rejected_cycles = []
+  rejected_energies = []
+  for c in cycles:
+    entry = log_data[str(c)]
+    if entry.get("swap_accepted") is False:
+      rejected_cycles.append(c)
+      rejected_energies.append(entry.get("all_min_energy", entry.get("min_energy")))
+  if rejected_cycles:
+    ax.scatter(rejected_cycles, rejected_energies, marker="x", color="#ff6b6b",
+               s=100, zorder=5, label="Swap rejected")
+
   ax.set_xlabel("Cycle")
   ax.set_ylabel("Energy")
   ax.set_title("Energy & similarity trajectory over cycles")
@@ -1731,7 +1819,7 @@ def make_energy_summary_plot(
       [s if s is not None else float("nan") for s in sim],
       marker="^",
       linestyle="--",
-      color="green",
+      color="#ffab40",
       label="Avg sequence similarity",
     )
     ax2.set_ylabel("Sequence similarity")
@@ -1746,7 +1834,7 @@ def make_energy_summary_plot(
   output_dir.mkdir(parents=True, exist_ok=True)
   out_path = output_dir / "energy_summary.png"
   fig.tight_layout()
-  fig.savefig(out_path, dpi=150)
+  fig.savefig(out_path, dpi=150, facecolor="black", edgecolor="none")
   plt.close(fig)
 
 
@@ -1780,6 +1868,13 @@ def run_pipeline(
   checkpoint_callback: Any = None,
 ) -> None:
   cfg.output_dir.mkdir(parents=True, exist_ok=True)
+
+  # Save all pipeline settings to the output folder for reproducibility.
+  config_snapshot = {k: str(v) if isinstance(v, Path) else v for k, v in asdict(cfg).items()}
+  config_path = cfg.output_dir / "pipeline_config.json"
+  with config_path.open("w") as f:
+    json.dump(config_snapshot, f, indent=2)
+  print(f"Config saved to {config_path}")
 
   # Load ProFam model once and reuse across all cycles.
   profam_model, profam_device = load_profam_model(cfg)
@@ -1824,6 +1919,14 @@ def run_pipeline(
   # Memory buffer: list of (ids, names, seqs, energies) tuples, one per past cycle.
   # At most cfg.n_memory entries are kept.
   memory_buffer: List[tuple] = []
+
+  # Anti-regression state: elitism + conditional swap.
+  elite_seq: str | None = None
+  elite_name: str | None = None
+  elite_energy: float = float("inf")
+  elite_cycle: int = -1
+  prev_injection_best_energy: float = float("inf")
+  annealing_temp: float | None = cfg.annealing_initial_temp
 
   for cycle in range(1, cfg.max_cycles + 1):
     print(f"=== Starting cycle {cycle} / {cfg.max_cycles} ===")
@@ -1939,6 +2042,16 @@ def run_pipeline(
     avg_sim = compute_avg_sequence_similarity(gen_seqs, base_initial_seqs)
     print(f"  Avg sequence similarity to initial: {avg_sim:.4f}")
 
+    # Update global elite if this cycle's best beats it.
+    cycle_best_idx = int(np.argmin(energies))
+    cycle_best_energy = float(energies[cycle_best_idx])
+    if cycle_best_energy < elite_energy:
+      elite_energy = cycle_best_energy
+      elite_seq = gen_seqs[cycle_best_idx]
+      elite_name = gen_names[cycle_best_idx]
+      elite_cycle = cycle
+      print(f"  New global elite: energy={elite_energy:.4f} (cycle {elite_cycle})")
+
     # Build the selection pool: current cycle + up to n_memory previous cycles.
     if cfg.n_memory > 0 and memory_buffer:
       pool_ids: List[int] = []
@@ -1985,6 +2098,60 @@ def run_pipeline(
       subset_size=k_inject,
     )
 
+    # Build candidate injection set from selected indices.
+    candidate_names = [pool_names[int(i)] for i in selected_indices]
+    candidate_seqs = [pool_seqs[int(i)] for i in selected_indices]
+    candidate_energies = [float(pool_energies[int(i)]) for i in selected_indices]
+
+    # --- Elitism: ensure global best sequence occupies position 0 ---
+    if cfg.elitism and elite_seq is not None:
+      if elite_seq in candidate_seqs:
+        # Move elite to position 0.
+        ei = candidate_seqs.index(elite_seq)
+        if ei != 0:
+          candidate_names[0], candidate_names[ei] = candidate_names[ei], candidate_names[0]
+          candidate_seqs[0], candidate_seqs[ei] = candidate_seqs[ei], candidate_seqs[0]
+          candidate_energies[0], candidate_energies[ei] = candidate_energies[ei], candidate_energies[0]
+      else:
+        # Replace worst candidate with elite.
+        worst_idx = int(np.argmax(candidate_energies))
+        candidate_names[worst_idx] = elite_name  # type: ignore[assignment]
+        candidate_seqs[worst_idx] = elite_seq
+        candidate_energies[worst_idx] = elite_energy
+        # Move elite to position 0.
+        if worst_idx != 0:
+          candidate_names[0], candidate_names[worst_idx] = candidate_names[worst_idx], candidate_names[0]
+          candidate_seqs[0], candidate_seqs[worst_idx] = candidate_seqs[worst_idx], candidate_seqs[0]
+          candidate_energies[0], candidate_energies[worst_idx] = candidate_energies[worst_idx], candidate_energies[0]
+      print(f"  Elitism: elite at position 0, energy={elite_energy:.4f} from cycle {elite_cycle}")
+
+    # --- Conditional swap: only update injection set if improvement ---
+    swap_accepted = True
+    swap_reason = "unconditional"
+    if cfg.accept_only_improvement and cycle > 1:
+      candidate_best = min(candidate_energies)
+      delta = candidate_best - prev_injection_best_energy
+      if delta < 0:
+        swap_accepted = True
+        swap_reason = "improved"
+        print(f"  Swap accepted: candidate best {candidate_best:.4f} < previous {prev_injection_best_energy:.4f}")
+      elif annealing_temp is not None and annealing_temp > 0:
+        accept_prob = math.exp(-delta / annealing_temp)
+        roll = rng.random()
+        if roll < accept_prob:
+          swap_accepted = True
+          swap_reason = f"annealing (p={accept_prob:.3f}, roll={roll:.3f}, T={annealing_temp:.4f})"
+          print(f"  Swap accepted via annealing: p={accept_prob:.3f}, T={annealing_temp:.4f}")
+        else:
+          swap_accepted = False
+          swap_reason = f"annealing_rejected (p={accept_prob:.3f}, roll={roll:.3f}, T={annealing_temp:.4f})"
+          print(f"  Swap rejected via annealing: p={accept_prob:.3f}, T={annealing_temp:.4f}")
+        annealing_temp *= cfg.annealing_decay
+      else:
+        swap_accepted = False
+        swap_reason = "no_improvement"
+        print(f"  Swap rejected: candidate best {candidate_best:.4f} >= previous {prev_injection_best_energy:.4f}")
+
     # Save statistics and selected sequences
     update_cycle_log(
       log_path=cycle_log_path,
@@ -1998,6 +2165,11 @@ def run_pipeline(
       pool_energies=pool_energies if cfg.n_memory > 0 else None,
       pool_names=pool_names if cfg.n_memory > 0 else None,
       pool_seqs=pool_seqs if cfg.n_memory > 0 else None,
+      swap_accepted=swap_accepted if cfg.accept_only_improvement else None,
+      swap_reason=swap_reason if cfg.accept_only_improvement else None,
+      elite_energy=elite_energy if cfg.elitism else None,
+      elite_cycle=elite_cycle if cfg.elitism else None,
+      annealing_temp=annealing_temp if cfg.annealing_initial_temp is not None else None,
     )
     save_selected_structures(
       cycle_index=cycle,
@@ -2007,9 +2179,13 @@ def run_pipeline(
       pool_offset=pool_offset,
     )
 
-    # Prepare injected sequences for next cycle (from the pool).
-    injected_names = [pool_names[int(i)] for i in selected_indices]
-    injected_seqs = [pool_seqs[int(i)] for i in selected_indices]
+    # Update injection set: only on accepted swaps.
+    if swap_accepted:
+      injected_names = candidate_names
+      injected_seqs = candidate_seqs
+      prev_injection_best_energy = min(candidate_energies)
+    else:
+      print(f"  Keeping previous injection set (best energy={prev_injection_best_energy:.4f})")
 
     # Update memory buffer with current cycle's data.
     if cfg.n_memory > 0:

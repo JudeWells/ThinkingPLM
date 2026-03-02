@@ -1,0 +1,30 @@
+## Energy configuration: Boltz + ipSAE + size penalty
+##
+## Folds the generated sequence together with the 15-PGDH target (2GDZ)
+## using Boltz, scores the interface with ipSAE, and penalizes
+## deviation from target_size (240 residues).
+##
+## Weight calibration: ipSAE scores are ~0.3-0.5 in magnitude.
+## ChemicalPotentialEnergy at 18 residues off target: 0.025 * 18 = 0.45.
+## Both terms contribute approximately equally.
+
+folding_oracle:
+  type: Boltz
+  kwargs: {}
+
+energies:
+  - type: ipSAEEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 10.0
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+
+  - type: ChemicalPotentialEnergy
+    kwargs:
+      weight: 0.025
+      target_size: 240
+      chemical_potential: 1.0
+      power: 1.0
