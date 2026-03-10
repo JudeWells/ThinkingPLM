@@ -11,7 +11,7 @@
 
 # Initial set of sequences S1 (FASTA format). By default these are included in
 # the ProFam prompt at every cycle (see reinject_initial below).
-initial_fasta: initial_sequences_1.fasta
+initial_fasta: configs/sequences/initial_sequence_hairpin.fasta
 
 
 # -----------------------------------------------------------------------------
@@ -45,7 +45,7 @@ profam_top_p: 0.95
 
 # YAML file specifying the folding oracle and energy terms. See
 # `example_energy_template_match.yaml` for a TemplateMatchEnergy example.
-energy_config: example_energy_lis_2GDZ.yaml
+energy_config: configs/energy/example_energy_lis_2GDZ.yaml
 
 
 # -----------------------------------------------------------------------------
@@ -59,7 +59,7 @@ f_inject: 0.2
 max_cycles: 1000
 
 # Where all outputs (logs, structures, plots) will be stored.
-output_dir: outputs/2GDZ_default_initial_esm_score_1000_cycles
+output_dir: outputs/2GDZ_initial_sequence_hairpin
 
 # Temperature used when converting energies into sampling probabilities
 # via softmax(-E / softmax_temperature).

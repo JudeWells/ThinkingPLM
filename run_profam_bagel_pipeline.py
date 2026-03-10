@@ -1328,9 +1328,13 @@ def evaluate_sequences_with_bagel(
     # Collect the chain-lists that need folding.
     batch_indices = [i for i, nf in enumerate(needs_folding) if nf]
     batch_chains = [per_seq_data[i]["all_chains"] for i in batch_indices]
-    batch_results = folding_oracle.predict_batch(batch_chains)
-    for i, result in zip(batch_indices, batch_results):
-      batch_folding_results[i] = result
+    # Fold each individually so a single failure doesn't crash the batch.
+    for i, chains in zip(batch_indices, batch_chains):
+      try:
+        batch_folding_results[i] = folding_oracle.predict(chains=chains)
+      except Exception as exc:
+        print(f"  Sequence {i}: folding failed ({exc}); will assign inf energy")
+        batch_folding_results[i] = None
 
   # ------------------------------------------------------------------
   # Phase 3: Compute energies using the (pre-computed) oracle results.
@@ -1346,16 +1350,34 @@ def evaluate_sequences_with_bagel(
     oracles_result = OraclesResultDict()
     folding_result = None
 
+    folding_failed = False
     for oracle in d["oracles_needed"]:
-      if isinstance(oracle, FoldingOracle) and batch_folding_results[idx] is not None:
-        # Use the pre-computed batch result.
-        result = batch_folding_results[idx]
+      if isinstance(oracle, FoldingOracle):
+        if batch_folding_results[idx] is not None:
+          # Use the pre-computed batch result.
+          result = batch_folding_results[idx]
+        else:
+          # Folding failed for this sequence — skip energy computation.
+          print(f"  Sequence {idx}: batch_folding_results is None, marking as folding_failed")
+          folding_failed = True
+          break
       else:
-        # Non-folding oracle or no batch result — call sequentially.
-        result = oracle.predict(chains=d["all_chains"])
+        # Non-folding oracle — call sequentially.
+        try:
+          result = oracle.predict(chains=d["all_chains"])
+        except Exception as exc:
+          print(f"  Sequence {idx}: non-folding oracle {type(oracle).__name__} failed: {exc}")
+          folding_failed = True
+          break
       oracles_result[oracle] = result
       if isinstance(oracle, FoldingOracle):
         folding_result = result
+
+    if folding_failed:
+      energies.append(float("inf"))
+      folding_results.append(None)
+      details.append({"total_energy": float("inf"), "error": "folding_failed"})
+      continue
 
     total_energy = 0.0
     per_term: Dict[str, float] = {}
@@ -1364,10 +1386,10 @@ def evaluate_sequences_with_bagel(
         unweighted, weighted = term.compute(oracles_result=oracles_result)
         per_term[term.name] = float(unweighted)
         total_energy += float(weighted)
-      except ValueError as exc:
+      except (ValueError, Exception) as exc:
         if not enforce_template:
           print(
-            f"  Sequence {idx}: caught ValueError in {term.name}, "
+            f"  Sequence {idx}: caught {type(exc).__name__} in {term.name}, "
             f"assigning inf energy ({exc})"
           )
           per_term[term.name] = float("inf")

@@ -1,0 +1,33 @@
+## Energy configuration: AlphaFast (AF3) + ipSAE + SolubleMPNN perplexity scoring
+##
+## Folds the generated sequence together with the 15-PGDH target (2GDZ)
+## using AlphaFold3 via AlphaFast on Modal, scores the interface with
+## ipSAE, and evaluates designability with SolubleMPNN perplexity.
+##
+## AlphaFast predictions are more expensive (~$0.035/prediction, ~28s)
+## but significantly more accurate for protein-protein interface prediction
+## than Boltz/ESMFold. ipSAE uses the PAE matrix from AF3 for interface
+## quality. SolMPNNPerplexityEnergy calls a separate Modal app
+## (proteinmpnn-scorer) to score the GEN chain's sequence-backbone
+## compatibility.
+
+folding_oracle:
+  type: AlphaFast
+  kwargs:
+    model_seeds: [1]
+
+energies:
+  - type: ipSAEEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 10.0
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+
+  - type: SolMPNNPerplexityEnergy
+    kwargs:
+      weight: 0.1
+      residues:
+        GEN: "all"

@@ -4,9 +4,9 @@
 ## Boltz runs as a subprocess inside the Modal container (same GPU).
 ##
 ## Usage:
-##   python run_profam_bagel_pipeline.py --config pipeline_berlin_boltz_ipsae_modal.yaml
+##   python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_berlin_boltz_ipsae_modal.yaml
 
-initial_fasta: initial_sequence_hairpin.fasta
+initial_fasta: configs/sequences/initial_sequence_hairpin.fasta
 
 profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
 profam_sampler: single
@@ -16,7 +16,7 @@ profam_max_generated_length: null
 profam_temperature: 0.8
 profam_top_p: 0.95
 
-energy_config: example_energy_boltz_ipsae_2GDZ.yaml
+energy_config: configs/energy/example_energy_boltz_ipsae_2GDZ.yaml
 
 f_inject: 0.25
 max_cycles: 200

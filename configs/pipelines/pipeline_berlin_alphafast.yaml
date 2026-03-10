@@ -5,13 +5,13 @@
 ## because AF3 predictions are slower (~28s each).
 ##
 ## Usage:
-##   python run_profam_bagel_pipeline.py --config pipeline_berlin_alphafast.yaml
+##   python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_berlin_alphafast.yaml
 
 # -----------------------------------------------------------------------------
 # Input sequences
 # -----------------------------------------------------------------------------
 
-initial_fasta: initial_sequence_hairpin.fasta
+initial_fasta: configs/sequences/initial_sequence_hairpin.fasta
 
 # -----------------------------------------------------------------------------
 # ProFam settings
@@ -29,7 +29,7 @@ profam_top_p: 0.95
 # BAGEL energy configuration
 # -----------------------------------------------------------------------------
 
-energy_config: example_energy_alphafast_2GDZ.yaml
+energy_config: configs/energy/example_energy_alphafast_2GDZ.yaml
 
 # -----------------------------------------------------------------------------
 # Pipeline control

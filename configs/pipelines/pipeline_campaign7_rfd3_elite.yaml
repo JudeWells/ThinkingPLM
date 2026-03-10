@@ -5,7 +5,7 @@
 ## inpainted starting point. Elitism prevents losing the best
 ## binder found so far.
 
-initial_fasta: initial_sequence_rfd3_inpaint.fasta
+initial_fasta: configs/sequences/initial_sequence_rfd3_inpaint.fasta
 
 profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
 profam_sampler: single
@@ -15,7 +15,7 @@ profam_max_generated_length: null
 profam_temperature: 0.8
 profam_top_p: 0.95
 
-energy_config: example_energy_boltz_ipsae_2GDZ.yaml
+energy_config: configs/energy/example_energy_boltz_ipsae_2GDZ.yaml
 
 f_inject: 0.25
 max_cycles: 200

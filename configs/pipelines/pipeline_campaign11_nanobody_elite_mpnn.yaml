@@ -1,10 +1,10 @@
-## Campaign 10: RFdiffusion inpaint scaffold + elitism + ipSAE + MPNN
+## Campaign 11: Nanobody scaffold + elitism + ipSAE + MPNN
 ##
-## 80aa RFdiffusion-inpainted scaffold with elitism enabled.
+## Compact 63aa nanobody-like scaffold with elitism enabled.
 ## Scores both interface quality (ipSAE) and designability
-## (SolubleMPNN perplexity).
+## (SolubleMPNN perplexity). Warmer softmax for exploration.
 
-initial_fasta: initial_sequence_rfd3_inpaint.fasta
+initial_fasta: configs/sequences/initial_sequence_nanobody_like.fasta
 
 profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
 profam_sampler: single
@@ -14,13 +14,13 @@ profam_max_generated_length: null
 profam_temperature: 0.8
 profam_top_p: 0.95
 
-energy_config: example_energy_boltz_ipsae_mpnn_2GDZ.yaml
+energy_config: configs/energy/example_energy_boltz_ipsae_mpnn_2GDZ.yaml
 
 f_inject: 0.25
 max_cycles: 200
-output_dir: outputs/campaign10_rfd3_elite_mpnn
-softmax_temperature: 0.01
-random_seed: 101010
+output_dir: outputs/campaign11_nanobody_elite_mpnn
+softmax_temperature: 0.02
+random_seed: 111111
 run_on_modal: true
 output_frequency: 1
 enforce_template: true
