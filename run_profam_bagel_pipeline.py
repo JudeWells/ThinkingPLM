@@ -145,6 +145,9 @@ class PipelineConfig:
   annealing_initial_temp: float | None = None
   annealing_decay: float = 0.95
 
+  proposal_method: str = "profam"  # "profam" or "random_mutation"
+  max_mutations: int = 5
+
 
 def _to_path(x: Any) -> Path:
   return x if isinstance(x, Path) else Path(str(x))
@@ -175,7 +178,7 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
 
   cfg = PipelineConfig(
     initial_fasta=_to_path(pick("initial_fasta")),
-    profam_checkpoint_dir=_to_path(pick("profam_checkpoint_dir")),
+    profam_checkpoint_dir=_to_path(pick("profam_checkpoint_dir", ".")),
     profam_sampler=str(pick("profam_sampler", "single")),
     profam_num_samples=int(pick("profam_num_samples", 10)),
     profam_max_tokens=int(pick("profam_max_tokens", 8192)),
@@ -219,7 +222,16 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
       else float(pick("annealing_initial_temp"))
     ),
     annealing_decay=float(pick("annealing_decay", 0.95)),
+    proposal_method=str(pick("proposal_method", "profam")),
+    max_mutations=int(pick("max_mutations", 5)),
   )
+
+  if cfg.proposal_method not in ("profam", "random_mutation"):
+    raise ValueError(
+      f"proposal_method must be 'profam' or 'random_mutation', got '{cfg.proposal_method}'"
+    )
+  if cfg.max_mutations < 1:
+    raise ValueError(f"max_mutations must be >= 1, got {cfg.max_mutations}")
 
   if not 0.0 < cfg.f_inject <= 1.0:
     raise ValueError(f"f_inject must be in (0, 1], got {cfg.f_inject}")
@@ -227,7 +239,7 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     raise ValueError("profam_num_samples (N_output) must be > 0.")
   if not cfg.initial_fasta.is_file():
     raise FileNotFoundError(f"Initial FASTA not found: {cfg.initial_fasta}")
-  if not cfg.profam_checkpoint_dir.is_dir():
+  if cfg.proposal_method == "profam" and not cfg.profam_checkpoint_dir.is_dir():
     raise FileNotFoundError(f"ProFam checkpoint_dir not found: {cfg.profam_checkpoint_dir}")
   if not cfg.energy_config.is_file():
     raise FileNotFoundError(f"Energy config not found: {cfg.energy_config}")
@@ -409,6 +421,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
     help=(
       "Decay factor for simulated annealing temperature each cycle "
       "(default 0.95). Only used when annealing_initial_temp is set."
+    ),
+  )
+
+  p.add_argument(
+    "--proposal_method",
+    type=str,
+    default=None,
+    choices=["profam", "random_mutation"],
+    help=(
+      "Sequence proposal method: 'profam' (default) uses ProFam language model, "
+      "'random_mutation' generates candidates via random amino acid substitutions."
+    ),
+  )
+  p.add_argument(
+    "--max_mutations",
+    type=int,
+    default=None,
+    help=(
+      "Maximum number of point mutations per candidate when proposal_method "
+      "is 'random_mutation' (default 5). Each candidate receives between 1 "
+      "and max_mutations mutations uniformly at random."
     ),
   )
 
@@ -625,6 +658,70 @@ def run_profam_generation(
   output_fasta(accessions, sequences, str(out_fasta))
 
   return list(accessions), list(sequences)
+
+
+# ---------------------------------------------------------------------------
+# Random mutation proposer
+# ---------------------------------------------------------------------------
+
+STANDARD_AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+
+
+def run_random_mutation_generation(
+  seed_sequences: List[str],
+  num_samples: int,
+  max_mutations: int,
+  rng: np.random.Generator,
+) -> Tuple[List[str], List[str]]:
+  """
+  Generate candidate sequences by introducing random point mutations.
+
+  For each candidate, a seed sequence is picked uniformly at random from
+  *seed_sequences*.  Between 1 and *max_mutations* positions (inclusive) are
+  then chosen uniformly without replacement and each is replaced with a
+  uniformly sampled amino acid (which may be the same as the original).
+
+  Parameters
+  ----------
+  seed_sequences : list of str
+      One or more parent sequences to mutate.
+  num_samples : int
+      Number of mutant candidates to produce.
+  max_mutations : int
+      Upper bound on the number of substitutions per candidate.
+  rng : numpy.random.Generator
+      Reproducible random state.
+
+  Returns
+  -------
+  names : list of str
+      Accession-style labels for each candidate.
+  sequences : list of str
+      The mutated amino acid sequences.
+  """
+  aa_list = list(STANDARD_AMINO_ACIDS)
+  names: List[str] = []
+  sequences: List[str] = []
+
+  for i in range(num_samples):
+    parent = seed_sequences[rng.integers(len(seed_sequences))]
+    seq = list(parent)
+    n_mut = int(rng.integers(1, max_mutations + 1))
+    n_mut = min(n_mut, len(seq))
+    positions = rng.choice(len(seq), size=n_mut, replace=False)
+
+    mutations_desc: List[str] = []
+    for pos in positions:
+      old_aa = seq[pos]
+      new_aa = aa_list[rng.integers(len(aa_list))]
+      mutations_desc.append(f"{old_aa}{pos + 1}{new_aa}")
+      seq[pos] = new_aa
+
+    mutant = "".join(seq)
+    names.append(f"random_mutant_{i}_{'+'.join(mutations_desc)}")
+    sequences.append(mutant)
+
+  return names, sequences
 
 
 # ---------------------------------------------------------------------------
@@ -1898,8 +1995,12 @@ def run_pipeline(
     json.dump(config_snapshot, f, indent=2)
   print(f"Config saved to {config_path}")
 
-  # Load ProFam model once and reuse across all cycles.
-  profam_model, profam_device = load_profam_model(cfg)
+  # Load ProFam model once and reuse across all cycles (skip for non-ProFam proposals).
+  profam_model, profam_device = (None, "cpu")
+  if cfg.proposal_method == "profam":
+    profam_model, profam_device = load_profam_model(cfg)
+  else:
+    print(f"Proposal method: {cfg.proposal_method} (max_mutations={cfg.max_mutations})")
 
   # Load energy configuration & instantiate BAGEL folding oracle.
   energy_cfg = load_energy_config(cfg.energy_config)
@@ -2018,14 +2119,22 @@ def run_pipeline(
     # Step 1 & 2: generation + evaluation, with retry logic for enforce_template=False
     max_generation_attempts = 5
     for attempt in range(1, max_generation_attempts + 1):
-      gen_names, gen_seqs = run_profam_generation(
-        cfg=cfg,
-        input_fasta=profam_input_fasta,
-        cycle_dir=cycle_dir,
-        model=profam_model,
-        device=profam_device,
-        fixed_positions=fixed_residues,
-      )
+      if cfg.proposal_method == "random_mutation":
+        gen_names, gen_seqs = run_random_mutation_generation(
+          seed_sequences=all_seqs,
+          num_samples=cfg.profam_num_samples,
+          max_mutations=cfg.max_mutations,
+          rng=rng,
+        )
+      else:
+        gen_names, gen_seqs = run_profam_generation(
+          cfg=cfg,
+          input_fasta=profam_input_fasta,
+          cycle_dir=cycle_dir,
+          model=profam_model,
+          device=profam_device,
+          fixed_positions=fixed_residues,
+        )
       if len(gen_seqs) != cfg.profam_num_samples:
         print(
           f"Warning: expected {cfg.profam_num_samples} generated sequences, "
@@ -2265,8 +2374,15 @@ def main(argv: Sequence[str] | None = None) -> None:
 
   yaml_cfg = load_yaml_config(Path(args.config)) if args.config else {}
 
-  # Ensure required values are present either in YAML or CLI.
-  for required in ("initial_fasta", "profam_checkpoint_dir", "energy_config"):
+  # Determine proposal method early to know which fields are required.
+  proposal_method = (
+    getattr(args, "proposal_method", None)
+    or yaml_cfg.get("proposal_method", "profam")
+  )
+  required_fields = ["initial_fasta", "energy_config"]
+  if proposal_method == "profam":
+    required_fields.append("profam_checkpoint_dir")
+  for required in required_fields:
     if not (required in yaml_cfg and yaml_cfg[required]) and getattr(args, required) is None:
       parser.error(
         f"--{required} must be provided either in the YAML config or as a CLI flag."
