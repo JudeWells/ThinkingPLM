@@ -1571,7 +1571,7 @@ def _pairwise_identity(seq_a: str, seq_b: str) -> float:
   if aln_len == 0:
     return 0.0
   matches = sum(a == b and a != "-" for a, b in zip(aln_a, aln_b))
-  return matches / aln_len
+  return matches / max(len(seq_a), len(seq_b))
 
 
 def compute_avg_sequence_similarity(
@@ -1698,6 +1698,7 @@ def update_cycle_log(
   energies: Sequence[float],
   sequence_details: Sequence[Dict[str, Any]],
   avg_similarity: float | None = None,
+  avg_similarity_to_prompt: float | None = None,
   global_ids: Sequence[int] | None = None,
   pool_ids: Sequence[int] | None = None,
   pool_energies: Sequence[float] | None = None,
@@ -1827,6 +1828,8 @@ def update_cycle_log(
     cycle_entry["pool_size"] = len(pool_ids)
   if avg_similarity is not None:
     cycle_entry["all_avg_similarity"] = avg_similarity
+  if avg_similarity_to_prompt is not None:
+    cycle_entry["all_avg_similarity_to_prompt"] = avg_similarity_to_prompt
   if swap_accepted is not None:
     cycle_entry["swap_accepted"] = swap_accepted
   if swap_reason is not None:
@@ -1895,6 +1898,7 @@ def append_cycle_csv(
   details: Sequence[Dict[str, Any]],
   folding_results: Sequence[Any],
   initial_seqs: Sequence[str],
+  prompt_seqs: Sequence[str] | None = None,
 ) -> None:
   """Append one row per generated sequence to the all_sequences.csv file."""
   import csv
@@ -1911,7 +1915,7 @@ def append_cycle_csv(
   fieldnames = [
     "cycle", "name", "sequence", "length", "total_energy",
   ] + energy_term_keys + [
-    "ptm", "mean_plddt", "iptm", "similarity_to_initial",
+    "ptm", "mean_plddt", "iptm", "similarity_to_initial", "similarity_to_prompt",
   ]
 
   with csv_path.open("a", newline="") as f:
@@ -1945,8 +1949,10 @@ def append_cycle_csv(
         except Exception:
           pass
 
-      # Similarity to initial.
+      # Similarity to initial (original prompt).
       sim = max(_pairwise_identity(seq, init_s) for init_s in initial_seqs) if initial_seqs else ""
+      # Similarity to current prompt.
+      sim_prompt = max(_pairwise_identity(seq, ps) for ps in prompt_seqs) if prompt_seqs else ""
 
       row: Dict[str, Any] = {
         "cycle": cycle_index,
@@ -1961,6 +1967,7 @@ def append_cycle_csv(
       row["mean_plddt"] = plddt_val
       row["iptm"] = iptm_val
       row["similarity_to_initial"] = sim
+      row["similarity_to_prompt"] = sim_prompt
 
       writer.writerow(row)
 
@@ -2026,20 +2033,32 @@ def make_energy_summary_plot(
   ax.grid(True, linestyle="--", alpha=0.4)
 
   # Plot sequence similarity on a twin y-axis if available.
-  sim = [log_data[str(c)].get("all_avg_similarity") for c in cycles]
-  if any(s is not None for s in sim):
+  sim_original = [log_data[str(c)].get("all_avg_similarity") for c in cycles]
+  sim_prompt = [log_data[str(c)].get("all_avg_similarity_to_prompt") for c in cycles]
+  has_sim_original = any(s is not None for s in sim_original)
+  has_sim_prompt = any(s is not None for s in sim_prompt)
+  if has_sim_original or has_sim_prompt:
     ax2 = ax.twinx()
-    ax2.plot(
-      cycles,
-      [s if s is not None else float("nan") for s in sim],
-      marker="^",
-      linestyle="--",
-      color="#ffab40",
-      label="Avg sequence similarity",
-    )
+    if has_sim_original:
+      ax2.plot(
+        cycles,
+        [s if s is not None else float("nan") for s in sim_original],
+        marker="^",
+        linestyle="--",
+        color="#ffab40",
+        label="Similarity to original",
+      )
+    if has_sim_prompt:
+      ax2.plot(
+        cycles,
+        [s if s is not None else float("nan") for s in sim_prompt],
+        marker="v",
+        linestyle="--",
+        color="#e040fb",
+        label="Similarity to prompt",
+      )
     ax2.set_ylabel("Sequence similarity")
     ax2.set_ylim(0, 1.05)
-    # Merge legends from both axes.
     lines1, labels1 = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax.legend(lines1 + lines2, labels1 + labels2, fontsize="small")
@@ -2329,15 +2348,18 @@ def run_pipeline(
       details=details,
       folding_results=folding_results,
       initial_seqs=base_initial_seqs,
+      prompt_seqs=all_seqs,
     )
 
     # Assign global unique IDs to this cycle's sequences.
     gen_ids = list(range(next_global_id, next_global_id + len(gen_seqs)))
     next_global_id += len(gen_seqs)
 
-    # Compute average sequence similarity to the initial sequences.
+    # Compute average sequence similarity to original and current prompt.
     avg_sim = compute_avg_sequence_similarity(gen_seqs, base_initial_seqs)
-    print(f"  Avg sequence similarity to initial: {avg_sim:.4f}")
+    avg_sim_to_prompt = compute_avg_sequence_similarity(gen_seqs, all_seqs)
+    print(f"  Avg sequence similarity to original: {avg_sim:.4f}")
+    print(f"  Avg sequence similarity to prompt:   {avg_sim_to_prompt:.4f}")
 
     # Update global elite if this cycle's best beats it.
     cycle_best_idx = int(np.argmin(energies))
@@ -2457,6 +2479,7 @@ def run_pipeline(
       energies=energies,
       sequence_details=details,
       avg_similarity=avg_sim,
+      avg_similarity_to_prompt=avg_sim_to_prompt,
       global_ids=gen_ids,
       pool_ids=pool_ids if cfg.n_memory > 0 else None,
       pool_energies=pool_energies if cfg.n_memory > 0 else None,
