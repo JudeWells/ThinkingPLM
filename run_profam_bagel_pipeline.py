@@ -147,6 +147,7 @@ class PipelineConfig:
 
   proposal_method: str = "profam"  # "profam" or "random_mutation"
   max_mutations: int = 5
+  freeze_prompt: bool = False
 
 
 def _to_path(x: Any) -> Path:
@@ -224,6 +225,7 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     annealing_decay=float(pick("annealing_decay", 0.95)),
     proposal_method=str(pick("proposal_method", "profam")),
     max_mutations=int(pick("max_mutations", 5)),
+    freeze_prompt=bool(pick("freeze_prompt", False)),
   )
 
   if cfg.proposal_method not in ("profam", "random_mutation"):
@@ -442,6 +444,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
       "Maximum number of point mutations per candidate when proposal_method "
       "is 'random_mutation' (default 5). Each candidate receives between 1 "
       "and max_mutations mutations uniformly at random."
+    ),
+  )
+  p.add_argument(
+    "--freeze_prompt",
+    type=str,
+    default=None,
+    help=(
+      "If true, keep the ProFam prompt (injection set) frozen at its initial "
+      "state across all cycles. The pipeline still generates and scores sequences "
+      "but never updates the prompt. Useful as a baseline to test whether prompt "
+      "updating improves results."
     ),
   )
 
@@ -1514,6 +1527,8 @@ def evaluate_sequences_with_bagel(
       if fr is not None:
         cif_path = structures_dir / f"sequence_{idx:04d}.cif"
         fr.to_cif(cif_path)
+        if hasattr(fr, "save_attributes"):
+          fr.save_attributes(structures_dir / f"sequence_{idx:04d}")
 
   return energies, details, folding_results
 
@@ -1867,6 +1882,87 @@ def save_selected_structures(
     if fr is not None:
       cif_path = seq_dir / f"sequence_{out_idx:04d}.cif"
       fr.to_cif(cif_path)
+      if hasattr(fr, "save_attributes"):
+        fr.save_attributes(seq_dir / f"sequence_{out_idx:04d}")
+
+
+def append_cycle_csv(
+  csv_path: Path,
+  cycle_index: int,
+  names: Sequence[str],
+  sequences: Sequence[str],
+  energies: Sequence[float],
+  details: Sequence[Dict[str, Any]],
+  folding_results: Sequence[Any],
+  initial_seqs: Sequence[str],
+) -> None:
+  """Append one row per generated sequence to the all_sequences.csv file."""
+  import csv
+
+  write_header = not csv_path.is_file()
+
+  # Collect all energy term keys from the first non-error detail entry.
+  energy_term_keys: List[str] = []
+  for d in details:
+    if isinstance(d, dict) and "energy_terms" in d:
+      energy_term_keys = sorted(d["energy_terms"].keys())
+      break
+
+  fieldnames = [
+    "cycle", "name", "sequence", "length", "total_energy",
+  ] + energy_term_keys + [
+    "ptm", "mean_plddt", "iptm", "similarity_to_initial",
+  ]
+
+  with csv_path.open("a", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
+    if write_header:
+      writer.writeheader()
+
+    for idx in range(len(sequences)):
+      seq = sequences[idx]
+      # Extract per-term energies.
+      term_values: Dict[str, float] = {}
+      if idx < len(details) and isinstance(details[idx], dict):
+        term_values = details[idx].get("energy_terms", {})
+
+      # Extract structural metrics from folding result.
+      ptm_val = ""
+      plddt_val = ""
+      iptm_val = ""
+      fr = folding_results[idx] if idx < len(folding_results) else None
+      if fr is not None:
+        try:
+          ptm_val = float(fr.ptm[0])
+        except Exception:
+          pass
+        try:
+          plddt_val = float(fr.local_plddt[0].mean())
+        except Exception:
+          pass
+        try:
+          iptm_val = float(fr.chain_pair_iptm[0, 1])
+        except Exception:
+          pass
+
+      # Similarity to initial.
+      sim = max(_pairwise_identity(seq, init_s) for init_s in initial_seqs) if initial_seqs else ""
+
+      row: Dict[str, Any] = {
+        "cycle": cycle_index,
+        "name": names[idx] if idx < len(names) else "",
+        "sequence": seq,
+        "length": len(seq),
+        "total_energy": energies[idx] if idx < len(energies) else "",
+      }
+      for k in energy_term_keys:
+        row[k] = term_values.get(k, "")
+      row["ptm"] = ptm_val
+      row["mean_plddt"] = plddt_val
+      row["iptm"] = iptm_val
+      row["similarity_to_initial"] = sim
+
+      writer.writerow(row)
 
 
 def make_energy_summary_plot(
@@ -1995,6 +2091,10 @@ def run_pipeline(
     json.dump(config_snapshot, f, indent=2)
   print(f"Config saved to {config_path}")
 
+  if cfg.freeze_prompt and not cfg.reinject_initial:
+    print("Warning: freeze_prompt requires reinject_initial=True. Setting it.")
+    cfg.reinject_initial = True
+
   # Load ProFam model once and reuse across all cycles (skip for non-ProFam proposals).
   profam_model, profam_device = (None, "cpu")
   if cfg.proposal_method == "profam":
@@ -2050,6 +2150,60 @@ def run_pipeline(
   elite_cycle: int = -1
   prev_injection_best_energy: float = float("inf")
   annealing_temp: float | None = cfg.annealing_initial_temp
+
+  # Evaluate initial seed sequence(s) to establish a baseline energy.
+  # This ensures cycle 1 must improve over the seed to be accepted.
+  if cfg.elitism or cfg.accept_only_improvement:
+    print("=== Evaluating initial seed sequence(s) ===")
+    seed_energies, seed_details, seed_folding_results = evaluate_sequences_with_bagel(
+      sequences=base_initial_seqs,
+      energy_cfg=energy_cfg,
+      folding_oracle=folding_oracle,
+      cycle_index=0,
+      cycle_dir=cfg.output_dir / "cycle_000_seed",
+      enforce_template=cfg.enforce_template,
+    )
+    seed_best_idx = int(np.argmin(seed_energies))
+    seed_best_energy = float(seed_energies[seed_best_idx])
+    print(f"  Seed sequence best energy: {seed_best_energy:.4f}")
+    if seed_details[seed_best_idx] and isinstance(seed_details[seed_best_idx], dict):
+      terms = {k: v for k, v in seed_details[seed_best_idx].items() if k != "total_energy"}
+      print(f"  Seed energy terms: {terms}")
+    # Log seed baseline as cycle 0 in cycle_stats.json.
+    seed_entry = {
+      "cycle": 0,
+      "num_generated": len(base_initial_seqs),
+      "all_avg_energy": float(np.mean(seed_energies)),
+      "all_min_energy": seed_best_energy,
+      "best_sequence": {
+        "sequence": base_initial_seqs[seed_best_idx],
+        "energy": seed_best_energy,
+        "energy_terms": (
+          {k: v for k, v in seed_details[seed_best_idx].items() if k != "total_energy"}
+          if seed_details[seed_best_idx] and isinstance(seed_details[seed_best_idx], dict)
+          else {}
+        ),
+      },
+      "swap_accepted": None,
+      "swap_reason": "seed_baseline",
+    }
+    log_path = cfg.output_dir / "cycle_stats.json"
+    if log_path.is_file():
+      with log_path.open("r") as f:
+        log_data = json.load(f)
+    else:
+      log_data = {}
+    log_data["0"] = seed_entry
+    with log_path.open("w") as f:
+      json.dump(log_data, f, indent=2)
+
+    prev_injection_best_energy = seed_best_energy
+    if seed_best_energy < elite_energy:
+      elite_energy = seed_best_energy
+      elite_seq = base_initial_seqs[seed_best_idx]
+      elite_name = base_initial_names[seed_best_idx]
+      elite_cycle = 0
+      print(f"  Initial elite set: energy={elite_energy:.4f}")
 
   for cycle in range(1, cfg.max_cycles + 1):
     print(f"=== Starting cycle {cycle} / {cfg.max_cycles} ===")
@@ -2165,6 +2319,18 @@ def run_pipeline(
         f"only inf-energy sequences in cycle {cycle}. Proceeding with last batch."
       )
 
+    # Log all generated sequences to CSV.
+    append_cycle_csv(
+      csv_path=cfg.output_dir / "all_sequences.csv",
+      cycle_index=cycle,
+      names=gen_names,
+      sequences=gen_seqs,
+      energies=energies,
+      details=details,
+      folding_results=folding_results,
+      initial_seqs=base_initial_seqs,
+    )
+
     # Assign global unique IDs to this cycle's sequences.
     gen_ids = list(range(next_global_id, next_global_id + len(gen_seqs)))
     next_global_id += len(gen_seqs)
@@ -2259,7 +2425,7 @@ def run_pipeline(
     # --- Conditional swap: only update injection set if improvement ---
     swap_accepted = True
     swap_reason = "unconditional"
-    if cfg.accept_only_improvement and cycle > 1:
+    if cfg.accept_only_improvement:
       candidate_best = min(candidate_energies)
       delta = candidate_best - prev_injection_best_energy
       if delta < 0:
@@ -2310,8 +2476,10 @@ def run_pipeline(
       pool_offset=pool_offset,
     )
 
-    # Update injection set: only on accepted swaps.
-    if swap_accepted:
+    # Update injection set: only on accepted swaps (and only if prompt is not frozen).
+    if cfg.freeze_prompt:
+      print(f"  freeze_prompt=True: prompt unchanged")
+    elif swap_accepted:
       injected_names = candidate_names
       injected_seqs = candidate_seqs
       prev_injection_best_energy = min(candidate_energies)

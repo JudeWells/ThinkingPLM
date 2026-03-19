@@ -6,4 +6,5 @@ OLD_SIMU/*
 .profam_repo/
 *.log
 outputs_no_elitism/
+af3_test_structures/
 profam-devo-manuscript

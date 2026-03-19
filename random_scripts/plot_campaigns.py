@@ -197,22 +197,26 @@ def plot_accepted_best(raw_data: dict, title: str, output_path: str):
 
 
 # --- Main ---
+# campaigns = {
+#     "Campaign 1: Short Helix (aggressive)": "outputs/campaign1_short_helix",
+#     "Campaign 2: 3-Helix Bundle (memory)": "outputs/campaign2_3helix_memory",
+#     "Campaign 3: Ankyrin Repeat (explore)": "outputs/campaign3_ankyrin_explore",
+#     "Campaign 4: Hairpin (pure ipSAE)": "outputs/campaign4_hairpin_pure_ipsae",
+#     "Campaign 5: Nanobody (creative)": "outputs/campaign5_nanobody_creative",
+#     "Campaign 6: Hairpin (elite, ipSAE)": "outputs/campaign6_hairpin_elite",
+#     "Campaign 7: RFd3 (elite, ipSAE)": "outputs/campaign7_rfd3_elite",
+#     "Campaign 8: Nanobody (elite, ipSAE)": "outputs/campaign8_nanobody_elite",
+#     "Campaign 9: Hairpin (elite, ipSAE+MPNN)": "outputs/campaign9_hairpin_elite_mpnn",
+#     "Campaign 10: RFd3 (elite, ipSAE+MPNN)": "outputs/campaign10_rfd3_elite_mpnn",
+#     "Campaign 11: Nanobody (elite, ipSAE+MPNN)": "outputs/campaign11_nanobody_elite_mpnn",
+#     "Campaign 12: Tiny Barrel (elite, ipSAE)": "outputs/campaign12_tiny_barrel_elite",
+#     "Campaign 13: Repebody (elite, ipSAE+size)": "outputs/campaign13_repebody_elite_size",
+#     "4D5 Antibody + MPNN": "outputs/2GDZ_boltz_ipsae_mpnn_4D5_modal",
+#     "Hairpin + MPNN (original)": "outputs/2GDZ_boltz_ipsae_mpnn_modal",
+# }
+
 campaigns = {
-    "Campaign 1: Short Helix (aggressive)": "outputs/campaign1_short_helix",
-    "Campaign 2: 3-Helix Bundle (memory)": "outputs/campaign2_3helix_memory",
-    "Campaign 3: Ankyrin Repeat (explore)": "outputs/campaign3_ankyrin_explore",
-    "Campaign 4: Hairpin (pure ipSAE)": "outputs/campaign4_hairpin_pure_ipsae",
-    "Campaign 5: Nanobody (creative)": "outputs/campaign5_nanobody_creative",
-    "Campaign 6: Hairpin (elite, ipSAE)": "outputs/campaign6_hairpin_elite",
-    "Campaign 7: RFd3 (elite, ipSAE)": "outputs/campaign7_rfd3_elite",
-    "Campaign 8: Nanobody (elite, ipSAE)": "outputs/campaign8_nanobody_elite",
-    "Campaign 9: Hairpin (elite, ipSAE+MPNN)": "outputs/campaign9_hairpin_elite_mpnn",
-    "Campaign 10: RFd3 (elite, ipSAE+MPNN)": "outputs/campaign10_rfd3_elite_mpnn",
-    "Campaign 11: Nanobody (elite, ipSAE+MPNN)": "outputs/campaign11_nanobody_elite_mpnn",
-    "Campaign 12: Tiny Barrel (elite, ipSAE)": "outputs/campaign12_tiny_barrel_elite",
-    "Campaign 13: Repebody (elite, ipSAE+size)": "outputs/campaign13_repebody_elite_size",
-    "4D5 Antibody + MPNN": "outputs/2GDZ_boltz_ipsae_mpnn_4D5_modal",
-    "Hairpin + MPNN (original)": "outputs/2GDZ_boltz_ipsae_mpnn_modal",
+    "Campaign 16: bindcraft boltz mpnn": "outputs/campaign16_bindcraft_boltz_mpnn",
 }
 
 print("Plotting campaign results...\n")
