@@ -12,7 +12,7 @@ profam_top_p: 0.95
 f_inject: 0.25
 max_cycles: 100
 softmax_temperature: 0.01
-run_on_modal: true
+run_on_modal: false
 output_frequency: 1
 enforce_template: false
 sample_with_reinsertion: false

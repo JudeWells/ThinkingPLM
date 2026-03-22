@@ -1,0 +1,32 @@
+## Example: Thompson sampling for conditioning sequence selection
+##
+## Uses Thompson sampling (Beta posteriors) to learn which conditioning
+## sequences produce the best progeny, rather than greedy softmax selection.
+
+initial_fasta: configs/sequences/initial_sequence_hairpin.fasta
+
+profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
+profam_sampler: single
+profam_num_samples: 1
+profam_max_tokens: 8192
+profam_max_generated_length: null
+profam_temperature: 0.8
+profam_top_p: 0.95
+
+energy_config: configs/energy/example_energy_boltz_ipsae_2GDZ_15PGDH.yaml
+
+f_inject: 1.0
+max_cycles: 50
+output_dir: outputs/thompson_example
+softmax_temperature: 1.0
+random_seed: 42
+run_on_modal: true
+output_frequency: 1
+enforce_template: true
+reinject_initial: false
+n_memory: 0
+
+# Thompson sampling settings
+selection_strategy: thompson
+thompson_m_samples: 1
+thompson_reward_term: ipSAE

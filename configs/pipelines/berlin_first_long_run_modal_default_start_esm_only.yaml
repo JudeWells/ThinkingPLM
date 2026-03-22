@@ -73,7 +73,7 @@ random_seed: 297482572
 # a remote Modal job and, inside that job, BAGEL's ESMFold folding oracle
 # will automatically use Modal as well (use_modal=True), regardless of the
 # value set in the energy JSON file.
-run_on_modal: true
+run_on_modal: false
 
 # How often (in cycles) to push intermediate results back to the local
 # machine when running on Modal. Also pushes at the end of the simulation.

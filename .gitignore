@@ -3,8 +3,11 @@ __pycache__/
 Miniconda3-*.sh
 outputs/
 OLD_SIMU/*
+.vscode/
 .profam_repo/
 *.log
 outputs_no_elitism/
 af3_test_structures/
 profam-devo-manuscript
+nohup.out
+thompson_sample_nohup.out

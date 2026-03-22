@@ -111,6 +111,196 @@ ROOT_DIR = Path(__file__).resolve().parent
 
 
 # ---------------------------------------------------------------------------
+# Thompson Sampling for conditioning sequence selection
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ThompsonArm:
+  arm_id: int
+  sequence: str
+  name: str
+  alpha: float              # Beta posterior α
+  beta_param: float         # Beta posterior β
+  ipsae_raw: float          # Raw ipSAE at creation
+  reward: float             # clamp(-ipsae_raw, 0, 1)
+  parent_arm_id: int | None
+  created_at_cycle: int
+  times_selected: int = 0
+  total_reward_credited: float = 0.0
+
+
+class ThompsonSampler:
+  """Manages a pool of arms for Thompson sampling over conditioning sequences."""
+
+  def __init__(
+    self,
+    m_samples: int = 1,
+    exploit_bias: float = 1.0,
+    rng: np.random.Generator | None = None,
+  ):
+    self.m_samples = max(1, m_samples)
+    self.exploit_bias = max(1.0, exploit_bias)
+    self.rng = rng if rng is not None else np.random.default_rng()
+    self.arms: Dict[int, ThompsonArm] = {}
+    self._next_arm_id = 0
+
+  @staticmethod
+  def _ipsae_to_reward(ipsae_raw: float) -> float:
+    """Convert raw ipSAE (negative = better) to reward in [0, 1]."""
+    return float(np.clip(-ipsae_raw, 0.0, 1.0))
+
+  def add_arm(
+    self,
+    sequence: str,
+    name: str,
+    ipsae_raw: float,
+    parent_arm_id: int | None,
+    cycle: int,
+  ) -> ThompsonArm:
+    """Register a new arm with Beta(1 + r, 2 - r) prior from its own ipSAE."""
+    reward = self._ipsae_to_reward(ipsae_raw)
+    arm = ThompsonArm(
+      arm_id=self._next_arm_id,
+      sequence=sequence,
+      name=name,
+      alpha=1.0 + reward,
+      beta_param=2.0 - reward,
+      ipsae_raw=ipsae_raw,
+      reward=reward,
+      parent_arm_id=parent_arm_id,
+      created_at_cycle=cycle,
+    )
+    self.arms[arm.arm_id] = arm
+    self._next_arm_id += 1
+    return arm
+
+  def select_arm(self) -> ThompsonArm:
+    """Thompson sampling: sample θ ~ Beta(α*b, β*b) per arm, pick max.
+
+    When exploit_bias > 1, both α and β are scaled up before sampling,
+    which concentrates the Beta distribution around its mean — making
+    selection more greedy (exploitative).  exploit_bias=1.0 is standard
+    Thompson sampling.
+    """
+    if not self.arms:
+      raise RuntimeError("No arms registered in ThompsonSampler.")
+    best_arm = None
+    best_theta = -1.0
+    b = self.exploit_bias
+    for arm in self.arms.values():
+      # Sample m times and take the max (max-seeking variant).
+      thetas = self.rng.beta(arm.alpha * b, arm.beta_param * b, size=self.m_samples)
+      theta = float(np.max(thetas))
+      if theta > best_theta:
+        best_theta = theta
+        best_arm = arm
+    assert best_arm is not None
+    best_arm.times_selected += 1
+    return best_arm
+
+  def update_arm(self, arm_id: int, progeny_ipsae: float) -> None:
+    """Update the chosen arm's posterior with the progeny's reward."""
+    arm = self.arms[arm_id]
+    reward = self._ipsae_to_reward(progeny_ipsae)
+    arm.alpha += reward
+    arm.beta_param += (1.0 - reward)
+    arm.total_reward_credited += reward
+
+  def get_state_dict(self) -> List[Dict[str, Any]]:
+    """Serialize all arm states for JSON logging."""
+    result = []
+    for arm in self.arms.values():
+      result.append({
+        "arm_id": arm.arm_id,
+        "sequence": arm.sequence,
+        "name": arm.name,
+        "alpha": arm.alpha,
+        "beta_param": arm.beta_param,
+        "ipsae_raw": arm.ipsae_raw,
+        "reward": arm.reward,
+        "parent_arm_id": arm.parent_arm_id,
+        "created_at_cycle": arm.created_at_cycle,
+        "times_selected": arm.times_selected,
+        "total_reward_credited": arm.total_reward_credited,
+      })
+    return result
+
+  def decay_posteriors(self, discount: float) -> None:
+    """Apply exponential decay to all arm posteriors.
+
+    Shrinks α and β toward the prior (1, 1) by the discount factor,
+    making the sampler more responsive to recent observations.
+    """
+    if discount >= 1.0:
+      return
+    for arm in self.arms.values():
+      arm.alpha = 1.0 + discount * (arm.alpha - 1.0)
+      arm.beta_param = 1.0 + discount * (arm.beta_param - 1.0)
+
+
+class TemperatureBandit:
+  """Thompson sampler over a discrete set of temperature bins."""
+
+  def __init__(
+    self,
+    bins: List[float],
+    exploit_bias: float = 1.0,
+    rng: np.random.Generator | None = None,
+  ):
+    self.bins = sorted(bins)
+    self.exploit_bias = max(1.0, exploit_bias)
+    self.rng = rng if rng is not None else np.random.default_rng()
+    # Each bin gets a Beta(1, 1) = uniform prior.
+    self.alphas = {t: 1.0 for t in self.bins}
+    self.betas = {t: 1.0 for t in self.bins}
+    self.times_selected: Dict[float, int] = {t: 0 for t in self.bins}
+    self.total_reward: Dict[float, float] = {t: 0.0 for t in self.bins}
+
+  def select(self) -> float:
+    """Thompson-sample a temperature bin."""
+    best_temp = self.bins[0]
+    best_theta = -1.0
+    b = self.exploit_bias
+    for t in self.bins:
+      theta = float(self.rng.beta(self.alphas[t] * b, self.betas[t] * b))
+      if theta > best_theta:
+        best_theta = theta
+        best_temp = t
+    self.times_selected[best_temp] += 1
+    return best_temp
+
+  def update(self, temperature: float, reward: float) -> None:
+    """Update the chosen bin's posterior with the observed reward."""
+    self.alphas[temperature] += reward
+    self.betas[temperature] += (1.0 - reward)
+    self.total_reward[temperature] += reward
+
+  def decay(self, discount: float) -> None:
+    """Apply exponential decay toward the prior."""
+    if discount >= 1.0:
+      return
+    for t in self.bins:
+      self.alphas[t] = 1.0 + discount * (self.alphas[t] - 1.0)
+      self.betas[t] = 1.0 + discount * (self.betas[t] - 1.0)
+
+  def get_state_dict(self) -> List[Dict[str, Any]]:
+    """Serialize state for JSON logging."""
+    result = []
+    for t in self.bins:
+      a, b = self.alphas[t], self.betas[t]
+      result.append({
+        "temperature": t,
+        "alpha": a,
+        "beta_param": b,
+        "expected_reward": a / (a + b),
+        "times_selected": self.times_selected[t],
+        "total_reward": self.total_reward[t],
+      })
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Config dataclass & CLI/YAML handling
 # ---------------------------------------------------------------------------
 
@@ -148,6 +338,14 @@ class PipelineConfig:
   proposal_method: str = "profam"  # "profam" or "random_mutation"
   max_mutations: int = 5
   freeze_prompt: bool = False
+
+  selection_strategy: str = "greedy"       # "greedy" or "thompson"
+  thompson_m_samples: int = 1             # max-seeking: sample m times per arm
+  thompson_reward_term: str = "ipSAE"     # energy term name for reward
+  thompson_exploit_bias: float = 1.0      # >1 = more exploitation (concentrate posteriors)
+  thompson_temperature_bins: List[float] | None = None  # e.g. [0.6, 0.8, 1.0, 1.3]; None = fixed temperature
+  thompson_discount: float = 1.0          # per-cycle decay on posteriors (1.0 = no decay)
+  deduplicate_sequences: bool = True       # skip folding for already-seen sequences, retry generation
 
 
 def _to_path(x: Any) -> Path:
@@ -226,11 +424,26 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     proposal_method=str(pick("proposal_method", "profam")),
     max_mutations=int(pick("max_mutations", 5)),
     freeze_prompt=bool(pick("freeze_prompt", False)),
+    selection_strategy=str(pick("selection_strategy", "greedy")),
+    thompson_m_samples=int(pick("thompson_m_samples", 1)),
+    thompson_reward_term=str(pick("thompson_reward_term", "ipSAE")),
+    thompson_exploit_bias=float(pick("thompson_exploit_bias", 1.0)),
+    thompson_temperature_bins=(
+      None
+      if pick("thompson_temperature_bins", None) is None
+      else [float(x) for x in pick("thompson_temperature_bins")]
+    ),
+    thompson_discount=float(pick("thompson_discount", 1.0)),
+    deduplicate_sequences=bool(pick("deduplicate_sequences", True)),
   )
 
   if cfg.proposal_method not in ("profam", "random_mutation"):
     raise ValueError(
       f"proposal_method must be 'profam' or 'random_mutation', got '{cfg.proposal_method}'"
+    )
+  if cfg.selection_strategy not in ("greedy", "thompson"):
+    raise ValueError(
+      f"selection_strategy must be 'greedy' or 'thompson', got '{cfg.selection_strategy}'"
     )
   if cfg.max_mutations < 1:
     raise ValueError(f"max_mutations must be >= 1, got {cfg.max_mutations}")
@@ -455,6 +668,79 @@ def build_arg_parser() -> argparse.ArgumentParser:
       "state across all cycles. The pipeline still generates and scores sequences "
       "but never updates the prompt. Useful as a baseline to test whether prompt "
       "updating improves results."
+    ),
+  )
+
+  # Thompson sampling.
+  p.add_argument(
+    "--selection_strategy",
+    type=str,
+    default=None,
+    choices=["greedy", "thompson"],
+    help=(
+      "Selection strategy for choosing conditioning sequences: 'greedy' (default) "
+      "uses softmax sampling with elitism/swap, 'thompson' uses Thompson sampling "
+      "with Beta posteriors to learn which sequences produce the best progeny."
+    ),
+  )
+  p.add_argument(
+    "--thompson_m_samples",
+    type=int,
+    default=None,
+    help=(
+      "Max-seeking variant: sample m times from each arm's Beta posterior and "
+      "take the max. Higher values bias toward high-variance arms. Default: 1."
+    ),
+  )
+  p.add_argument(
+    "--thompson_reward_term",
+    type=str,
+    default=None,
+    help=(
+      "Energy term name to use as the reward signal for Thompson sampling. "
+      "Default: 'ipSAE'. Must match a term name in the energy config."
+    ),
+  )
+  p.add_argument(
+    "--thompson_exploit_bias",
+    type=float,
+    default=None,
+    help=(
+      "Exploitation bias for Thompson sampling. Scales α and β by this factor "
+      "before sampling θ, concentrating the Beta distribution around its mean. "
+      "1.0 = standard Thompson (default), 5.0 = strongly exploitative, "
+      "10.0 = nearly greedy."
+    ),
+  )
+  p.add_argument(
+    "--thompson_temperature_bins",
+    type=float,
+    nargs="+",
+    default=None,
+    help=(
+      "Discrete temperature values for the temperature bandit. When set, "
+      "Thompson sampling selects a temperature each cycle alongside the "
+      "conditioning sequence. E.g.: --thompson_temperature_bins 0.6 0.8 1.0 1.3"
+    ),
+  )
+  p.add_argument(
+    "--thompson_discount",
+    type=float,
+    default=None,
+    help=(
+      "Per-cycle exponential decay on all Thompson posteriors. Shrinks α and β "
+      "toward the prior each cycle, making the sampler more responsive to recent "
+      "observations. 1.0 = no decay (default), 0.95 = moderate forgetting."
+    ),
+  )
+  p.add_argument(
+    "--deduplicate_sequences",
+    type=str,
+    default=None,
+    help=(
+      "If true, skip structure prediction for generated sequences that are "
+      "identical to previously seen sequences (reuse cached energies) and "
+      "retry generation to obtain novel sequences. Default: true."
     ),
   )
 
@@ -1601,6 +1887,25 @@ def compute_avg_sequence_similarity(
   return float(np.mean(best_sims))
 
 
+def extract_reward_term(
+  details: Sequence[Dict[str, Any]],
+  term_name: str,
+) -> List[float]:
+  """Extract per-sequence values for a named energy term from evaluation details.
+
+  Returns a list parallel to ``details``. If a sequence has no valid value
+  for the term (e.g. folding failure), ``float('inf')`` is returned.
+  """
+  values: List[float] = []
+  for d in details:
+    if d and isinstance(d, dict) and "energy_terms" in d:
+      val = d["energy_terms"].get(term_name, float("inf"))
+      values.append(float(val))
+    else:
+      values.append(float("inf"))
+  return values
+
+
 def softmax_from_energies(
   energies: Sequence[float],
   temperature: float = 1.0,
@@ -1709,6 +2014,9 @@ def update_cycle_log(
   elite_energy: float | None = None,
   elite_cycle: int | None = None,
   annealing_temp: float | None = None,
+  thompson_state: Dict[str, Any] | None = None,
+  thompson_selected_arm_id: int | None = None,
+  thompson_progeny_reward: float | None = None,
 ) -> None:
   """
   Append / update a JSON log keyed by cycle index.
@@ -1841,6 +2149,12 @@ def update_cycle_log(
     }
   if annealing_temp is not None:
     cycle_entry["annealing_temp"] = annealing_temp
+  if thompson_selected_arm_id is not None:
+    cycle_entry["thompson_selected_arm_id"] = thompson_selected_arm_id
+  if thompson_progeny_reward is not None:
+    cycle_entry["thompson_progeny_reward"] = thompson_progeny_reward
+  if thompson_state is not None:
+    cycle_entry["thompson_num_arms"] = thompson_state.get("num_arms", 0)
 
   log_data[str(cycle_index)] = cycle_entry
 
@@ -2125,6 +2439,22 @@ def run_pipeline(
   energy_cfg = load_energy_config(cfg.energy_config)
   folding_oracle = build_folding_oracle(energy_cfg, force_modal=force_modal_folding)
 
+  # Validate Thompson reward term exists in the energy config.
+  if cfg.selection_strategy == "thompson":
+    energy_term_types = [e["type"] for e in energy_cfg.get("energies", [])]
+    # The term name in evaluation details is derived from the BAGEL class name
+    # minus the "Energy" suffix (e.g. ipSAEEnergy → ipSAE). Check that at least
+    # one term type contains the reward term name.
+    reward_term_found = any(
+      cfg.thompson_reward_term in t for t in energy_term_types
+    )
+    if not reward_term_found:
+      raise ValueError(
+        f"thompson_reward_term='{cfg.thompson_reward_term}' not found among "
+        f"energy term types {energy_term_types}. The reward term name must "
+        f"match a key in the 'energy_terms' dict produced by evaluation."
+      )
+
   rng = np.random.default_rng(cfg.random_seed)
   cycle_log_path = cfg.output_dir / "cycle_stats.json"
 
@@ -2170,9 +2500,30 @@ def run_pipeline(
   prev_injection_best_energy: float = float("inf")
   annealing_temp: float | None = cfg.annealing_initial_temp
 
+  # Thompson sampling state.
+  thompson_sampler: ThompsonSampler | None = None
+  temp_bandit: TemperatureBandit | None = None
+  if cfg.selection_strategy == "thompson":
+    thompson_sampler = ThompsonSampler(
+      m_samples=cfg.thompson_m_samples,
+      exploit_bias=cfg.thompson_exploit_bias,
+      rng=rng,
+    )
+    if cfg.thompson_temperature_bins:
+      temp_bandit = TemperatureBandit(
+        bins=cfg.thompson_temperature_bins,
+        exploit_bias=cfg.thompson_exploit_bias,
+        rng=rng,
+      )
+      print(f"  Temperature bandit: bins={temp_bandit.bins}")
+
+  # Sequence deduplication cache: maps sequence string → (energy, details_dict).
+  # Populated during evaluation; checked before folding to skip duplicates.
+  seen_sequences: Dict[str, tuple] = {}
+
   # Evaluate initial seed sequence(s) to establish a baseline energy.
   # This ensures cycle 1 must improve over the seed to be accepted.
-  if cfg.elitism or cfg.accept_only_improvement:
+  if cfg.elitism or cfg.accept_only_improvement or cfg.selection_strategy == "thompson":
     print("=== Evaluating initial seed sequence(s) ===")
     seed_energies, seed_details, seed_folding_results = evaluate_sequences_with_bagel(
       sequences=base_initial_seqs,
@@ -2223,6 +2574,48 @@ def run_pipeline(
       elite_name = base_initial_names[seed_best_idx]
       elite_cycle = 0
       print(f"  Initial elite set: energy={elite_energy:.4f}")
+
+    # Cache seed sequences for deduplication.
+    if cfg.deduplicate_sequences:
+      for i, seq in enumerate(base_initial_seqs):
+        if seq not in seen_sequences:
+          seen_sequences[seq] = (float(seed_energies[i]), seed_details[i])
+      print(f"  Dedup cache: {len(seen_sequences)} seed sequences cached")
+
+    # Register seed sequences as initial Thompson arms.
+    if thompson_sampler is not None:
+      print(f"  Thompson SEED REGISTRATION (m_samples={thompson_sampler.m_samples}):")
+      seed_reward_values = extract_reward_term(seed_details, cfg.thompson_reward_term)
+      n_seed_registered = 0
+      for i, (name, seq) in enumerate(zip(base_initial_names, base_initial_seqs)):
+        ipsae_val = seed_reward_values[i]
+        if math.isfinite(ipsae_val):
+          arm = thompson_sampler.add_arm(
+            sequence=seq, name=name, ipsae_raw=ipsae_val,
+            parent_arm_id=None, cycle=0,
+          )
+          n_seed_registered += 1
+          print(f"    arm {arm.arm_id}: {name}, "
+                f"{cfg.thompson_reward_term}={ipsae_val:.4f}, "
+                f"reward={arm.reward:.4f}, "
+                f"α={arm.alpha:.4f}, β={arm.beta_param:.4f}, "
+                f"seq_len={len(seq)}")
+        else:
+          print(f"    SKIPPED {name}: {cfg.thompson_reward_term}=inf (folding failure)")
+      print(f"  Thompson: {n_seed_registered}/{len(base_initial_seqs)} seeds registered as arms")
+      # Set the best seed arm as the initial parent — cycle 1's progeny
+      # are conditioned on the seeds, so the best seed should get credit.
+      if thompson_sampler.arms:
+        best_seed_arm = min(
+          thompson_sampler.arms.values(), key=lambda a: a.ipsae_raw,
+        )
+        thompson_sampler._last_selected_arm_id = best_seed_arm.arm_id  # type: ignore[attr-defined]
+        print(f"  Thompson: initial parent set to arm {best_seed_arm.arm_id} "
+              f"({best_seed_arm.name}, ipSAE={best_seed_arm.ipsae_raw:.4f})")
+      # Save initial arms state.
+      arms_path = cfg.output_dir / "thompson_arms.json"
+      with arms_path.open("w") as f:
+        json.dump(thompson_sampler.get_state_dict(), f, indent=2)
 
   for cycle in range(1, cfg.max_cycles + 1):
     print(f"=== Starting cycle {cycle} / {cfg.max_cycles} ===")
@@ -2289,9 +2682,24 @@ def run_pipeline(
           all_seqs = list(injected_seqs)
     output_fasta(all_names, all_seqs, str(profam_input_fasta))
 
-    # Step 1 & 2: generation + evaluation, with retry logic for enforce_template=False
+    # Temperature bandit: sample a temperature for this cycle.
+    cycle_temperature: float | None = None
+    if temp_bandit is not None:
+      cycle_temperature = temp_bandit.select()
+      original_temperature = cfg.profam_temperature
+      cfg.profam_temperature = cycle_temperature
+      print(f"  Temperature bandit: sampled T={cycle_temperature}")
+      for t_info in temp_bandit.get_state_dict():
+        t = t_info["temperature"]
+        print(f"    T={t:.2f}: α={t_info['alpha']:.2f}, β={t_info['beta_param']:.2f}, "
+              f"E[θ]={t_info['expected_reward']:.3f}, selected {t_info['times_selected']}x")
+
+    # Step 1 & 2: generation + evaluation, with retry logic for
+    # enforce_template=False and deduplication.
     max_generation_attempts = 5
-    for attempt in range(1, max_generation_attempts + 1):
+    dedup_retries = 0
+    max_dedup_retries = 10  # cap retries to avoid infinite loops
+    for attempt in range(1, max_generation_attempts + max_dedup_retries + 1):
       if cfg.proposal_method == "random_mutation":
         gen_names, gen_seqs = run_random_mutation_generation(
           seed_sequences=all_seqs,
@@ -2314,14 +2722,78 @@ def run_pipeline(
           f"got {len(gen_seqs)}."
         )
 
-      energies, details, folding_results = evaluate_sequences_with_bagel(
-        sequences=gen_seqs,
-        energy_cfg=energy_cfg,
-        folding_oracle=folding_oracle,
-        cycle_index=cycle,
-        cycle_dir=cycle_dir,
-        enforce_template=cfg.enforce_template,
-      )
+      # Deduplication: check if all generated sequences have been seen before.
+      if cfg.deduplicate_sequences:
+        novel_mask = [seq not in seen_sequences for seq in gen_seqs]
+        n_novel = sum(novel_mask)
+        n_dup = len(gen_seqs) - n_novel
+        if n_dup > 0:
+          dup_seqs_preview = [s[:30] for s, is_novel in zip(gen_seqs, novel_mask) if not is_novel]
+          print(f"  Dedup: {n_novel} novel, {n_dup} duplicate(s) "
+                f"(cache size: {len(seen_sequences)})")
+          for dp in dup_seqs_preview[:3]:
+            print(f"    dup: {dp}...")
+        if n_novel == 0 and dedup_retries < max_dedup_retries:
+          dedup_retries += 1
+          print(f"  Dedup retry {dedup_retries}/{max_dedup_retries}: "
+                f"all {len(gen_seqs)} sequences are duplicates, regenerating...")
+          continue
+        if n_novel == 0:
+          # Exhausted dedup retries — use cached results for the duplicates.
+          print(f"  Dedup: exhausted {max_dedup_retries} retries, "
+                f"using cached results for duplicate sequences")
+          energies: List[float] = []
+          details: List[Dict[str, Any]] = []
+          folding_results: List[Any] = []
+          for seq in gen_seqs:
+            cached_energy, cached_detail = seen_sequences[seq]
+            energies.append(cached_energy)
+            details.append(cached_detail)
+            folding_results.append(None)
+          break
+
+        # We have at least some novel sequences. Separate novel vs cached.
+        novel_seqs = [s for s, is_novel in zip(gen_seqs, novel_mask) if is_novel]
+        novel_names = [n for n, is_novel in zip(gen_names, novel_mask) if is_novel]
+
+        # Evaluate only novel sequences.
+        novel_energies, novel_details, novel_folding = evaluate_sequences_with_bagel(
+          sequences=novel_seqs,
+          energy_cfg=energy_cfg,
+          folding_oracle=folding_oracle,
+          cycle_index=cycle,
+          cycle_dir=cycle_dir,
+          enforce_template=cfg.enforce_template,
+        )
+
+        # Merge results: novel gets fresh evaluation, duplicates get cached.
+        energies = []
+        details = []
+        folding_results = []
+        novel_idx = 0
+        for i, seq in enumerate(gen_seqs):
+          if novel_mask[i]:
+            energies.append(novel_energies[novel_idx])
+            details.append(novel_details[novel_idx])
+            folding_results.append(novel_folding[novel_idx])
+            # Add novel sequence to cache.
+            seen_sequences[seq] = (novel_energies[novel_idx], novel_details[novel_idx])
+            novel_idx += 1
+          else:
+            cached_energy, cached_detail = seen_sequences[seq]
+            energies.append(cached_energy)
+            details.append(cached_detail)
+            folding_results.append(None)
+      else:
+        # No deduplication — evaluate all sequences.
+        energies, details, folding_results = evaluate_sequences_with_bagel(
+          sequences=gen_seqs,
+          energy_cfg=energy_cfg,
+          folding_oracle=folding_oracle,
+          cycle_index=cycle,
+          cycle_dir=cycle_dir,
+          enforce_template=cfg.enforce_template,
+        )
 
       # When enforce_template is False, sequences with template mismatches
       # receive inf energy. If ALL sequences have inf, regenerate.
@@ -2330,12 +2802,13 @@ def run_pipeline(
           f"  Attempt {attempt}/{max_generation_attempts}: all sequences have "
           f"inf energy (template mismatch), regenerating..."
         )
-        continue
+        if attempt < max_generation_attempts:
+          continue
       break
     else:
       print(
-        f"Warning: all {max_generation_attempts} generation attempts produced "
-        f"only inf-energy sequences in cycle {cycle}. Proceeding with last batch."
+        f"Warning: all generation attempts produced only inf-energy or "
+        f"duplicate sequences in cycle {cycle}. Proceeding with last batch."
       )
 
     # Log all generated sequences to CSV.
@@ -2398,116 +2871,326 @@ def run_pipeline(
       pool_energies = list(energies)
       pool_offset = 0
 
-    # Step 3: probabilities via softmax(-energy / T) over the full pool.
-    probs = softmax_from_energies(
-      energies=pool_energies,
-      temperature=cfg.softmax_temperature,
-    )
+    # --- Thompson sampling branch ---
+    thompson_cycle_state: Dict[str, Any] | None = None
+    thompson_selected_arm_id: int | None = None
+    thompson_progeny_reward: float | None = None
 
-    # Step 4: sample subset according to probs.
-    # k is always based on the current generation size, not the pool size.
-    k_inject = max(1, int(math.floor(cfg.f_inject * len(gen_seqs))))
-    selected_indices = sample_subset_indices(
-      num_items=len(pool_seqs),
-      probs=probs,
-      f_inject=cfg.f_inject,
-      rng=rng,
-      replace=cfg.sample_with_reinsertion,
-      energies=pool_energies,
-      subset_size=k_inject,
-    )
+    if cfg.selection_strategy == "thompson" and thompson_sampler is not None:
+      # Extract per-sequence reward term values.
+      reward_values = extract_reward_term(details, cfg.thompson_reward_term)
+      n_finite = sum(1 for v in reward_values if math.isfinite(v))
+      n_inf = len(reward_values) - n_finite
+      print(f"  Thompson [{cfg.thompson_reward_term}]: {n_finite} finite, {n_inf} inf "
+            f"out of {len(reward_values)} progeny")
+      if n_finite > 0:
+        finite_vals = [v for v in reward_values if math.isfinite(v)]
+        print(f"    progeny {cfg.thompson_reward_term} range: "
+              f"[{min(finite_vals):.4f}, {max(finite_vals):.4f}], "
+              f"mean={np.mean(finite_vals):.4f}")
 
-    # Build candidate injection set from selected indices.
-    candidate_names = [pool_names[int(i)] for i in selected_indices]
-    candidate_seqs = [pool_seqs[int(i)] for i in selected_indices]
-    candidate_energies = [float(pool_energies[int(i)]) for i in selected_indices]
+      # Update the parent arm's posterior with the best progeny's reward.
+      # The parent arm is the one that was selected last cycle to condition on.
+      # On cycle 1 the parent is the best seed arm (set during init).
+      if hasattr(thompson_sampler, '_last_selected_arm_id'):
+        parent_id = thompson_sampler._last_selected_arm_id
+        parent_arm = thompson_sampler.arms[parent_id]
+        print(f"  Thompson POSTERIOR UPDATE for parent arm {parent_id} ({parent_arm.name}):")
+        print(f"    before: α={parent_arm.alpha:.4f}, β={parent_arm.beta_param:.4f}, "
+              f"E[θ]={parent_arm.alpha/(parent_arm.alpha+parent_arm.beta_param):.4f}")
+        # Find the best (most negative) finite reward value among progeny.
+        finite_rewards = [(i, v) for i, v in enumerate(reward_values) if math.isfinite(v)]
+        if finite_rewards:
+          best_progeny_idx, best_progeny_ipsae = min(finite_rewards, key=lambda x: x[1])
+          thompson_sampler.update_arm(parent_id, best_progeny_ipsae)
+          thompson_progeny_reward = ThompsonSampler._ipsae_to_reward(best_progeny_ipsae)
+          print(f"    best progeny: idx={best_progeny_idx}, "
+                f"{cfg.thompson_reward_term}={best_progeny_ipsae:.4f}, "
+                f"reward={thompson_progeny_reward:.4f}")
+          print(f"    after:  α={parent_arm.alpha:.4f}, β={parent_arm.beta_param:.4f}, "
+                f"E[θ]={parent_arm.alpha/(parent_arm.alpha+parent_arm.beta_param):.4f}")
+        else:
+          print(f"    no finite progeny — posterior unchanged")
 
-    # --- Elitism: ensure global best sequence occupies position 0 ---
-    if cfg.elitism and elite_seq is not None:
-      if elite_seq in candidate_seqs:
-        # Move elite to position 0.
-        ei = candidate_seqs.index(elite_seq)
-        if ei != 0:
-          candidate_names[0], candidate_names[ei] = candidate_names[ei], candidate_names[0]
-          candidate_seqs[0], candidate_seqs[ei] = candidate_seqs[ei], candidate_seqs[0]
-          candidate_energies[0], candidate_energies[ei] = candidate_energies[ei], candidate_energies[0]
-      else:
-        # Replace worst candidate with elite.
-        worst_idx = int(np.argmax(candidate_energies))
-        candidate_names[worst_idx] = elite_name  # type: ignore[assignment]
-        candidate_seqs[worst_idx] = elite_seq
-        candidate_energies[worst_idx] = elite_energy
-        # Move elite to position 0.
-        if worst_idx != 0:
-          candidate_names[0], candidate_names[worst_idx] = candidate_names[worst_idx], candidate_names[0]
-          candidate_seqs[0], candidate_seqs[worst_idx] = candidate_seqs[worst_idx], candidate_seqs[0]
-          candidate_energies[0], candidate_energies[worst_idx] = candidate_energies[worst_idx], candidate_energies[0]
-      print(f"  Elitism: elite at position 0, energy={elite_energy:.4f} from cycle {elite_cycle}")
+      # Update temperature bandit with the same reward signal.
+      if temp_bandit is not None and cycle_temperature is not None:
+        # Use the best finite progeny reward for the temperature update too.
+        temp_reward = thompson_progeny_reward if thompson_progeny_reward is not None else 0.0
+        temp_bandit.update(cycle_temperature, temp_reward)
+        print(f"  Temperature bandit UPDATE: T={cycle_temperature}, "
+              f"reward={temp_reward:.4f}")
 
-    # --- Conditional swap: only update injection set if improvement ---
-    swap_accepted = True
-    swap_reason = "unconditional"
-    if cfg.accept_only_improvement:
-      candidate_best = min(candidate_energies)
-      delta = candidate_best - prev_injection_best_energy
-      if delta < 0:
-        swap_accepted = True
-        swap_reason = "improved"
-        print(f"  Swap accepted: candidate best {candidate_best:.4f} < previous {prev_injection_best_energy:.4f}")
-      elif annealing_temp is not None and annealing_temp > 0:
-        accept_prob = math.exp(-delta / annealing_temp)
-        roll = rng.random()
-        if roll < accept_prob:
+      # Register all progeny with finite ipSAE as new arms.
+      parent_arm_id_for_progeny = getattr(thompson_sampler, '_last_selected_arm_id', None)
+      n_registered = 0
+      for i, (name, seq, ipsae_val) in enumerate(zip(gen_names, gen_seqs, reward_values)):
+        if math.isfinite(ipsae_val):
+          arm = thompson_sampler.add_arm(
+            sequence=seq, name=name, ipsae_raw=ipsae_val,
+            parent_arm_id=parent_arm_id_for_progeny, cycle=cycle,
+          )
+          n_registered += 1
+      print(f"  Thompson: registered {n_registered} new arms "
+            f"(total arms: {len(thompson_sampler.arms)})")
+
+      # Select next arm via Thompson sampling — log the top candidates.
+      b = thompson_sampler.exploit_bias
+      print(f"  Thompson ARM SELECTION (m_samples={thompson_sampler.m_samples}, "
+            f"exploit_bias={b:.1f}):")
+      # Sample θ for all arms and log top-5 for transparency.
+      # arm_thetas: List[tuple] = []
+      # for arm in thompson_sampler.arms.values():
+      #   thetas = rng.beta(arm.alpha * b, arm.beta_param * b, size=thompson_sampler.m_samples)
+      #   theta = float(np.max(thetas))
+      #   arm_thetas.append((arm, theta))
+      # arm_thetas.sort(key=lambda x: x[1], reverse=True)
+      # for rank, (arm, theta) in enumerate(arm_thetas[:5]):
+      #   marker = " <<<" if rank == 0 else ""
+      #   print(f"    rank {rank+1}: arm {arm.arm_id} ({arm.name}), "
+      #         f"θ={theta:.4f}, α={arm.alpha:.2f}, β={arm.beta_param:.2f}, "
+      #         f"E[θ]={arm.alpha/(arm.alpha+arm.beta_param):.4f}, "
+      #         f"selected {arm.times_selected}x, "
+      #         f"created cycle {arm.created_at_cycle}{marker}")
+      # if len(arm_thetas) > 5:
+      #   print(f"    ... ({len(arm_thetas) - 5} more arms)")
+
+      # Now do the actual selection (re-sample for the real pick).
+      next_arm = thompson_sampler.select_arm()
+      thompson_selected_arm_id = next_arm.arm_id
+      thompson_sampler._last_selected_arm_id = next_arm.arm_id  # type: ignore[attr-defined]
+      print(f"  Thompson SELECTED → arm {next_arm.arm_id} ({next_arm.name})")
+      print(f"    ipSAE_raw={next_arm.ipsae_raw:.4f}, "
+            f"α={next_arm.alpha:.4f}, β={next_arm.beta_param:.4f}, "
+            f"E[θ]={next_arm.alpha/(next_arm.alpha+next_arm.beta_param):.4f}")
+      print(f"    times_selected={next_arm.times_selected}, "
+            f"total_reward_credited={next_arm.total_reward_credited:.4f}, "
+            f"parent_arm={next_arm.parent_arm_id}, "
+            f"created_cycle={next_arm.created_at_cycle}")
+      print(f"    seq (first 60): {next_arm.sequence[:60]}...")
+
+      # Set injection to the single selected arm's sequence.
+      injected_names = [next_arm.name]
+      injected_seqs = [next_arm.sequence]
+
+      # For logging compatibility, create minimal selected_indices pointing at
+      # the best generated sequence this cycle.
+      selected_indices = np.array([int(np.argmin(energies))])
+
+      # Build detailed thompson cycle state for JSON logging.
+      # Include top-10 arms by expected reward for quick inspection.
+      arms_by_expected = sorted(
+        thompson_sampler.arms.values(),
+        key=lambda a: a.alpha / (a.alpha + a.beta_param),
+        reverse=True,
+      )
+      top_arms_summary = []
+      for arm in arms_by_expected[:10]:
+        top_arms_summary.append({
+          "arm_id": arm.arm_id,
+          "name": arm.name,
+          "alpha": arm.alpha,
+          "beta_param": arm.beta_param,
+          "expected_reward": arm.alpha / (arm.alpha + arm.beta_param),
+          "ipsae_raw": arm.ipsae_raw,
+          "times_selected": arm.times_selected,
+          "total_reward_credited": arm.total_reward_credited,
+          "parent_arm_id": arm.parent_arm_id,
+          "created_at_cycle": arm.created_at_cycle,
+        })
+      thompson_cycle_state: Dict[str, Any] = {
+        "num_arms": len(thompson_sampler.arms),
+        "selected_arm_id": thompson_selected_arm_id,
+        "selected_arm_name": next_arm.name,
+        "selected_arm_expected_reward": next_arm.alpha / (next_arm.alpha + next_arm.beta_param),
+        "selected_arm_alpha": next_arm.alpha,
+        "selected_arm_beta": next_arm.beta_param,
+        "selected_arm_times_selected": next_arm.times_selected,
+        "progeny_finite_count": n_finite,
+        "progeny_inf_count": n_inf,
+        "top_10_arms": top_arms_summary,
+      }
+      if cycle_temperature is not None:
+        thompson_cycle_state["sampled_temperature"] = cycle_temperature
+      if temp_bandit is not None:
+        thompson_cycle_state["temperature_bandit"] = temp_bandit.get_state_dict()
+
+      # Save full thompson arms state to dedicated file.
+      arms_path = cfg.output_dir / "thompson_arms.json"
+      with arms_path.open("w") as f:
+        json.dump(thompson_sampler.get_state_dict(), f, indent=2)
+
+      # Save per-cycle thompson decision log (append, one entry per cycle).
+      decision_log_path = cfg.output_dir / "thompson_decisions.jsonl"
+      decision_entry: Dict[str, Any] = {
+        "cycle": cycle,
+        "selected_arm_id": thompson_selected_arm_id,
+        "selected_arm_name": next_arm.name,
+        "selected_arm_alpha": next_arm.alpha,
+        "selected_arm_beta": next_arm.beta_param,
+        "selected_arm_expected_reward": next_arm.alpha / (next_arm.alpha + next_arm.beta_param),
+        "progeny_reward": thompson_progeny_reward,
+        "progeny_finite_count": n_finite,
+        "total_arms": len(thompson_sampler.arms),
+        "progeny_ipsae_values": [
+          round(v, 6) if math.isfinite(v) else None for v in reward_values
+        ],
+        "top_10_arms": top_arms_summary,
+      }
+      if cycle_temperature is not None:
+        decision_entry["sampled_temperature"] = cycle_temperature
+      if temp_bandit is not None:
+        decision_entry["temperature_bandit"] = temp_bandit.get_state_dict()
+      with decision_log_path.open("a") as f:
+        f.write(json.dumps(decision_entry) + "\n")
+
+      # Save statistics.
+      swap_accepted = True
+      swap_reason = "thompson"
+      update_cycle_log(
+        log_path=cycle_log_path,
+        cycle_index=cycle,
+        selected_indices=selected_indices,
+        energies=energies,
+        sequence_details=details,
+        avg_similarity=avg_sim,
+        avg_similarity_to_prompt=avg_sim_to_prompt,
+        global_ids=gen_ids,
+        thompson_state=thompson_cycle_state,
+        thompson_selected_arm_id=thompson_selected_arm_id,
+        thompson_progeny_reward=thompson_progeny_reward,
+      )
+      save_selected_structures(
+        cycle_index=cycle,
+        selected_indices=selected_indices,
+        folding_results=folding_results,
+        output_dir=cfg.output_dir,
+        pool_offset=pool_offset,
+      )
+
+      # Apply discount decay to all posteriors (sequence arms + temperature).
+      if cfg.thompson_discount < 1.0:
+        thompson_sampler.decay_posteriors(cfg.thompson_discount)
+        if temp_bandit is not None:
+          temp_bandit.decay(cfg.thompson_discount)
+        print(f"  Thompson discount: decayed posteriors by {cfg.thompson_discount}")
+
+      # Restore original temperature on cfg so it doesn't leak.
+      if temp_bandit is not None and cycle_temperature is not None:
+        cfg.profam_temperature = original_temperature  # type: ignore[possibly-undefined]
+
+    else:
+      # --- Greedy selection (original path) ---
+
+      # Step 3: probabilities via softmax(-energy / T) over the full pool.
+      probs = softmax_from_energies(
+        energies=pool_energies,
+        temperature=cfg.softmax_temperature,
+      )
+
+      # Step 4: sample subset according to probs.
+      # k is always based on the current generation size, not the pool size.
+      k_inject = max(1, int(math.floor(cfg.f_inject * len(gen_seqs))))
+      selected_indices = sample_subset_indices(
+        num_items=len(pool_seqs),
+        probs=probs,
+        f_inject=cfg.f_inject,
+        rng=rng,
+        replace=cfg.sample_with_reinsertion,
+        energies=pool_energies,
+        subset_size=k_inject,
+      )
+
+      # Build candidate injection set from selected indices.
+      candidate_names = [pool_names[int(i)] for i in selected_indices]
+      candidate_seqs = [pool_seqs[int(i)] for i in selected_indices]
+      candidate_energies = [float(pool_energies[int(i)]) for i in selected_indices]
+
+      # --- Elitism: ensure global best sequence occupies position 0 ---
+      if cfg.elitism and elite_seq is not None:
+        if elite_seq in candidate_seqs:
+          # Move elite to position 0.
+          ei = candidate_seqs.index(elite_seq)
+          if ei != 0:
+            candidate_names[0], candidate_names[ei] = candidate_names[ei], candidate_names[0]
+            candidate_seqs[0], candidate_seqs[ei] = candidate_seqs[ei], candidate_seqs[0]
+            candidate_energies[0], candidate_energies[ei] = candidate_energies[ei], candidate_energies[0]
+        else:
+          # Replace worst candidate with elite.
+          worst_idx = int(np.argmax(candidate_energies))
+          candidate_names[worst_idx] = elite_name  # type: ignore[assignment]
+          candidate_seqs[worst_idx] = elite_seq
+          candidate_energies[worst_idx] = elite_energy
+          # Move elite to position 0.
+          if worst_idx != 0:
+            candidate_names[0], candidate_names[worst_idx] = candidate_names[worst_idx], candidate_names[0]
+            candidate_seqs[0], candidate_seqs[worst_idx] = candidate_seqs[worst_idx], candidate_seqs[0]
+            candidate_energies[0], candidate_energies[worst_idx] = candidate_energies[worst_idx], candidate_energies[0]
+        print(f"  Elitism: elite at position 0, energy={elite_energy:.4f} from cycle {elite_cycle}")
+
+      # --- Conditional swap: only update injection set if improvement ---
+      swap_accepted = True
+      swap_reason = "unconditional"
+      if cfg.accept_only_improvement:
+        candidate_best = min(candidate_energies)
+        delta = candidate_best - prev_injection_best_energy
+        if delta < 0:
           swap_accepted = True
-          swap_reason = f"annealing (p={accept_prob:.3f}, roll={roll:.3f}, T={annealing_temp:.4f})"
-          print(f"  Swap accepted via annealing: p={accept_prob:.3f}, T={annealing_temp:.4f}")
+          swap_reason = "improved"
+          print(f"  Swap accepted: candidate best {candidate_best:.4f} < previous {prev_injection_best_energy:.4f}")
+        elif annealing_temp is not None and annealing_temp > 0:
+          accept_prob = math.exp(-delta / annealing_temp)
+          roll = rng.random()
+          if roll < accept_prob:
+            swap_accepted = True
+            swap_reason = f"annealing (p={accept_prob:.3f}, roll={roll:.3f}, T={annealing_temp:.4f})"
+            print(f"  Swap accepted via annealing: p={accept_prob:.3f}, T={annealing_temp:.4f}")
+          else:
+            swap_accepted = False
+            swap_reason = f"annealing_rejected (p={accept_prob:.3f}, roll={roll:.3f}, T={annealing_temp:.4f})"
+            print(f"  Swap rejected via annealing: p={accept_prob:.3f}, T={annealing_temp:.4f}")
+          annealing_temp *= cfg.annealing_decay
         else:
           swap_accepted = False
-          swap_reason = f"annealing_rejected (p={accept_prob:.3f}, roll={roll:.3f}, T={annealing_temp:.4f})"
-          print(f"  Swap rejected via annealing: p={accept_prob:.3f}, T={annealing_temp:.4f}")
-        annealing_temp *= cfg.annealing_decay
+          swap_reason = "no_improvement"
+          print(f"  Swap rejected: candidate best {candidate_best:.4f} >= previous {prev_injection_best_energy:.4f}")
+
+      # Save statistics and selected sequences
+      update_cycle_log(
+        log_path=cycle_log_path,
+        cycle_index=cycle,
+        selected_indices=selected_indices,
+        energies=energies,
+        sequence_details=details,
+        avg_similarity=avg_sim,
+        avg_similarity_to_prompt=avg_sim_to_prompt,
+        global_ids=gen_ids,
+        pool_ids=pool_ids if cfg.n_memory > 0 else None,
+        pool_energies=pool_energies if cfg.n_memory > 0 else None,
+        pool_names=pool_names if cfg.n_memory > 0 else None,
+        pool_seqs=pool_seqs if cfg.n_memory > 0 else None,
+        swap_accepted=swap_accepted if cfg.accept_only_improvement else None,
+        swap_reason=swap_reason if cfg.accept_only_improvement else None,
+        elite_energy=elite_energy if cfg.elitism else None,
+        elite_cycle=elite_cycle if cfg.elitism else None,
+        annealing_temp=annealing_temp if cfg.annealing_initial_temp is not None else None,
+      )
+      save_selected_structures(
+        cycle_index=cycle,
+        selected_indices=selected_indices,
+        folding_results=folding_results,
+        output_dir=cfg.output_dir,
+        pool_offset=pool_offset,
+      )
+
+      # Update injection set: only on accepted swaps (and only if prompt is not frozen).
+      if cfg.freeze_prompt:
+        print(f"  freeze_prompt=True: prompt unchanged")
+      elif swap_accepted:
+        injected_names = candidate_names
+        injected_seqs = candidate_seqs
+        prev_injection_best_energy = min(candidate_energies)
       else:
-        swap_accepted = False
-        swap_reason = "no_improvement"
-        print(f"  Swap rejected: candidate best {candidate_best:.4f} >= previous {prev_injection_best_energy:.4f}")
-
-    # Save statistics and selected sequences
-    update_cycle_log(
-      log_path=cycle_log_path,
-      cycle_index=cycle,
-      selected_indices=selected_indices,
-      energies=energies,
-      sequence_details=details,
-      avg_similarity=avg_sim,
-      avg_similarity_to_prompt=avg_sim_to_prompt,
-      global_ids=gen_ids,
-      pool_ids=pool_ids if cfg.n_memory > 0 else None,
-      pool_energies=pool_energies if cfg.n_memory > 0 else None,
-      pool_names=pool_names if cfg.n_memory > 0 else None,
-      pool_seqs=pool_seqs if cfg.n_memory > 0 else None,
-      swap_accepted=swap_accepted if cfg.accept_only_improvement else None,
-      swap_reason=swap_reason if cfg.accept_only_improvement else None,
-      elite_energy=elite_energy if cfg.elitism else None,
-      elite_cycle=elite_cycle if cfg.elitism else None,
-      annealing_temp=annealing_temp if cfg.annealing_initial_temp is not None else None,
-    )
-    save_selected_structures(
-      cycle_index=cycle,
-      selected_indices=selected_indices,
-      folding_results=folding_results,
-      output_dir=cfg.output_dir,
-      pool_offset=pool_offset,
-    )
-
-    # Update injection set: only on accepted swaps (and only if prompt is not frozen).
-    if cfg.freeze_prompt:
-      print(f"  freeze_prompt=True: prompt unchanged")
-    elif swap_accepted:
-      injected_names = candidate_names
-      injected_seqs = candidate_seqs
-      prev_injection_best_energy = min(candidate_energies)
-    else:
-      print(f"  Keeping previous injection set (best energy={prev_injection_best_energy:.4f})")
+        print(f"  Keeping previous injection set (best energy={prev_injection_best_energy:.4f})")
 
     # Update memory buffer with current cycle's data.
     if cfg.n_memory > 0:
@@ -2515,12 +3198,13 @@ def run_pipeline(
       if len(memory_buffer) > cfg.n_memory:
         memory_buffer.pop(0)
 
-    # Periodic checkpoint: push intermediate results every output_frequency
-    # cycles (and always at the final cycle).
+    # Periodic checkpoint: regenerate plots and push results every
+    # output_frequency cycles (and always at the final cycle).
     output_freq = max(1, cfg.output_frequency)
-    if checkpoint_callback and (cycle % output_freq == 0 or cycle == cfg.max_cycles):
+    if cycle % output_freq == 0 or cycle == cfg.max_cycles:
       make_energy_summary_plot(log_path=cycle_log_path, output_dir=cfg.output_dir)
-      checkpoint_callback(_collect_checkpoint_results(cfg))
+      if checkpoint_callback:
+        checkpoint_callback(_collect_checkpoint_results(cfg))
 
   # After all cycles, plot summary (always, even without callback).
   make_energy_summary_plot(

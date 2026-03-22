@@ -30,6 +30,16 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             // "python": "/home/judewells/miniconda3/envs/profam_bagel/bin/python"
+        },
+        {
+            "name": "Run Pipeline Bench 2GDZ Bindcraft Rank2 Thompson",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_profam_bagel_pipeline.py",
+            "args": ["--config", "configs/pipelines/pipeline_bench_2GDZ_bindcraft_rank2_thompson.yaml"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            // "python": "/home/judewells/miniconda3/envs/profam_bagel/bin/python"
         }
     ]
 }

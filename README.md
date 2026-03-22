@@ -365,7 +365,57 @@ The pipeline downloads the CIF, extracts the specified chain, and uses its seque
 
 The utility functions `download_pdb_cif()` and `extract_chain_from_cif()` are also available for standalone use from `run_profam_bagel_pipeline`.
 
-#### 3.9 Selection memory (`n_memory`)
+#### 3.9 Selection strategy
+
+The pipeline supports two strategies for choosing which sequences to condition ProFam on in the next cycle:
+
+| `selection_strategy` | Behaviour |
+|---|---|
+| `greedy` (default) | Softmax over energies → sample injection set → elitism/conditional swap. The classic path described in sections 1–5 above. |
+| `thompson` | Thompson sampling with Beta posteriors. Treats each sequence as a bandit arm and learns which conditioning sequences produce the best progeny over time. |
+
+##### Thompson sampling
+
+When `selection_strategy: thompson`, the pipeline uses a **multi-armed bandit** approach instead of greedy softmax selection:
+
+- **Arm** = a protein sequence with a Beta(α, β) posterior representing the distribution of rewards from its progeny.
+- **Reward** = `clamp(-ipSAE, 0, 1)`. Since ipSAE is negative (more negative = better binding), negating and clamping gives a reward in [0, 1].
+- **Bootstrap**: When a sequence is first observed, its own ipSAE provides the first observation → Beta(1 + r, 2 - r).
+
+Each cycle:
+1. Sample θᵢ ~ Beta(αᵢ, βᵢ) for every arm.
+2. Pick the arm with the highest θᵢ → use that sequence to condition ProFam.
+3. Generate progeny, evaluate their ipSAE.
+4. Update the chosen arm's posterior: α += reward, β += (1 - reward).
+5. Register all progeny (with finite ipSAE) as new arms.
+
+**Max-seeking variant**: Setting `thompson_m_samples > 1` samples m times from each arm's Beta posterior and takes the maximum. This biases selection toward high-variance (under-explored) arms — useful for encouraging exploration.
+
+Configuration:
+
+```yaml
+selection_strategy: thompson
+thompson_m_samples: 1        # 1 = standard Thompson, >1 = max-seeking
+thompson_reward_term: ipSAE  # energy term name used as reward signal
+```
+
+The `thompson_reward_term` must match a key in the `energy_terms` dict produced by BAGEL evaluation (e.g. `ipSAE` from `ipSAEEnergy`).
+
+Thompson mode outputs an additional file:
+- **`thompson_arms.json`** — full state of all arms (α, β, sequence, parent lineage, selection count), updated each cycle.
+- **`cycle_stats.json`** gains `thompson_selected_arm_id`, `thompson_progeny_reward`, and `thompson_num_arms` fields per cycle.
+
+An example config is at `configs/pipelines/pipeline_thompson_example.yaml`.
+
+##### When to use Thompson vs greedy
+
+| Scenario | Recommended |
+|---|---|
+| Short runs (< 20 cycles), well-understood scaffold | `greedy` with elitism |
+| Long exploratory runs, multiple scaffolds, unknown which sequences are good generators | `thompson` |
+| Need to balance exploration vs exploitation across a growing pool of candidates | `thompson` with `thompson_m_samples: 3` |
+
+#### 3.10 Selection memory (`n_memory`)
 
 By default, when selecting which sequences to inject into the next ProFam cycle, only the sequences generated in the **current** cycle are considered. The `n_memory` parameter widens this selection pool to include sequences from previous cycles:
 

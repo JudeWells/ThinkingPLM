@@ -1,0 +1,47 @@
+## Benchmark: Thompson sampling on BindCraft rank2 scaffold vs 15-PGDH (2GDZ)
+##
+## Based on outputs/bench/2GDZ_15PGDH/bincraft_rank2/profam_update/pipeline_config.json
+## but using Thompson sampling (m=10 max-seeking) instead of greedy elitism.
+##
+## Generates 1 progeny per cycle, conditions on a single arm selected by
+## Thompson sampling. Each sequence becomes a bandit arm with a Beta posterior
+## tracking the quality of its progeny's ipSAE.
+
+initial_fasta: configs/sequences/initial_rank2_bindcraft_15PGDH_l107_s438837_mpnn2.fasta
+
+profam_checkpoint_dir: ".profam_repo/model_checkpoints/profam-1"
+profam_sampler: single
+profam_num_samples: 1
+profam_max_tokens: 8192
+profam_max_generated_length: null
+profam_temperature: 0.8
+profam_top_p: 0.95
+
+energy_config: configs/energy/example_energy_boltz_ipsae_2GDZ_15PGDH.yaml
+
+f_inject: 0.25
+max_cycles: 100
+output_dir: outputs/bench/2GDZ_15PGDH/bincraft_rank2/thompson_m5
+softmax_temperature: 0.01
+random_seed: 106814
+run_on_modal: false
+output_frequency: 1
+enforce_template: false
+sample_with_reinsertion: false
+reinject_initial: true
+n_memory: 0
+elitism: false
+accept_only_improvement: false
+
+proposal_method: profam
+max_mutations: 5
+freeze_prompt: false
+
+# Thompson sampling settings
+selection_strategy: thompson
+thompson_m_samples: 5
+thompson_reward_term: ipSAE
+thompson_exploit_bias: 1.0     # 1.0=standard, >1=more exploitation
+thompson_temperature_bins: [0.6, 0.8, 1.0, 1.3]
+thompson_discount: 0.95        # per-cycle decay on posteriors
+deduplicate_sequences: true    # skip folding for already-seen sequences
