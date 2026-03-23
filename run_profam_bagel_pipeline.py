@@ -300,6 +300,66 @@ class TemperatureBandit:
     return result
 
 
+class ProposalBandit:
+  """Thompson sampler over proposal methods (profam vs random_mutation)."""
+
+  METHODS = ["profam", "random_mutation"]
+
+  def __init__(
+    self,
+    exploit_bias: float = 1.0,
+    rng: np.random.Generator | None = None,
+  ):
+    self.exploit_bias = max(1.0, exploit_bias)
+    self.rng = rng if rng is not None else np.random.default_rng()
+    self.alphas = {m: 1.0 for m in self.METHODS}
+    self.betas = {m: 1.0 for m in self.METHODS}
+    self.times_selected: Dict[str, int] = {m: 0 for m in self.METHODS}
+    self.total_reward: Dict[str, float] = {m: 0.0 for m in self.METHODS}
+
+  def select(self) -> str:
+    """Thompson-sample a proposal method."""
+    best_method = self.METHODS[0]
+    best_theta = -1.0
+    b = self.exploit_bias
+    for m in self.METHODS:
+      theta = float(self.rng.beta(self.alphas[m] * b, self.betas[m] * b))
+      if theta > best_theta:
+        best_theta = theta
+        best_method = m
+    self.times_selected[best_method] += 1
+    return best_method
+
+  def update(self, method: str, reward: float) -> None:
+    """Update the chosen method's posterior with the observed reward."""
+    self.alphas[method] += reward
+    self.betas[method] += (1.0 - reward)
+    self.total_reward[method] += reward
+
+  def decay(self, discount: float) -> None:
+    """Apply exponential decay toward the prior."""
+    if discount >= 1.0:
+      return
+    for m in self.METHODS:
+      self.alphas[m] = 1.0 + discount * (self.alphas[m] - 1.0)
+      self.betas[m] = 1.0 + discount * (self.betas[m] - 1.0)
+
+  def get_state_dict(self) -> List[Dict[str, Any]]:
+    """Serialize state for JSON logging."""
+    result = []
+    for m in self.METHODS:
+      a, b = self.alphas[m], self.betas[m]
+      result.append({
+        "method": m,
+        "alpha": a,
+        "beta_param": b,
+        "expected_reward": a / (a + b),
+        "times_selected": self.times_selected[m],
+        "total_reward": self.total_reward[m],
+      })
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Config dataclass & CLI/YAML handling
 # ---------------------------------------------------------------------------
@@ -345,6 +405,7 @@ class PipelineConfig:
   thompson_exploit_bias: float = 1.0      # >1 = more exploitation (concentrate posteriors)
   thompson_temperature_bins: List[float] | None = None  # e.g. [0.6, 0.8, 1.0, 1.3]; None = fixed temperature
   thompson_discount: float = 1.0          # per-cycle decay on posteriors (1.0 = no decay)
+  thompson_proposal_bandit: bool = False   # True = Thompson bandit over proposal methods (profam vs random_mutation)
   deduplicate_sequences: bool = True       # skip folding for already-seen sequences, retry generation
 
 
@@ -434,6 +495,7 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
       else [float(x) for x in pick("thompson_temperature_bins")]
     ),
     thompson_discount=float(pick("thompson_discount", 1.0)),
+    thompson_proposal_bandit=bool(pick("thompson_proposal_bandit", False)),
     deduplicate_sequences=bool(pick("deduplicate_sequences", True)),
   )
 
@@ -2017,6 +2079,7 @@ def update_cycle_log(
   thompson_state: Dict[str, Any] | None = None,
   thompson_selected_arm_id: int | None = None,
   thompson_progeny_reward: float | None = None,
+  proposal_method: str | None = None,
 ) -> None:
   """
   Append / update a JSON log keyed by cycle index.
@@ -2149,6 +2212,8 @@ def update_cycle_log(
     }
   if annealing_temp is not None:
     cycle_entry["annealing_temp"] = annealing_temp
+  if proposal_method is not None:
+    cycle_entry["proposal_method"] = proposal_method
   if thompson_selected_arm_id is not None:
     cycle_entry["thompson_selected_arm_id"] = thompson_selected_arm_id
   if thompson_progeny_reward is not None:
@@ -2213,6 +2278,7 @@ def append_cycle_csv(
   folding_results: Sequence[Any],
   initial_seqs: Sequence[str],
   prompt_seqs: Sequence[str] | None = None,
+  proposal_method: str | None = None,
 ) -> None:
   """Append one row per generated sequence to the all_sequences.csv file."""
   import csv
@@ -2227,7 +2293,7 @@ def append_cycle_csv(
       break
 
   fieldnames = [
-    "cycle", "name", "sequence", "length", "total_energy",
+    "cycle", "proposal_method", "name", "sequence", "length", "total_energy",
   ] + energy_term_keys + [
     "ptm", "mean_plddt", "iptm", "similarity_to_initial", "similarity_to_prompt",
   ]
@@ -2270,6 +2336,7 @@ def append_cycle_csv(
 
       row: Dict[str, Any] = {
         "cycle": cycle_index,
+        "proposal_method": proposal_method or "",
         "name": names[idx] if idx < len(names) else "",
         "sequence": seq,
         "length": len(seq),
@@ -2429,9 +2496,12 @@ def run_pipeline(
     cfg.reinject_initial = True
 
   # Load ProFam model once and reuse across all cycles (skip for non-ProFam proposals).
+  # When the proposal bandit is enabled, always load ProFam since it may be selected.
   profam_model, profam_device = (None, "cpu")
-  if cfg.proposal_method == "profam":
+  if cfg.proposal_method == "profam" or cfg.thompson_proposal_bandit:
     profam_model, profam_device = load_profam_model(cfg)
+    if cfg.thompson_proposal_bandit:
+      print("Proposal bandit enabled: ProFam model loaded (may also use random_mutation)")
   else:
     print(f"Proposal method: {cfg.proposal_method} (max_mutations={cfg.max_mutations})")
 
@@ -2503,6 +2573,7 @@ def run_pipeline(
   # Thompson sampling state.
   thompson_sampler: ThompsonSampler | None = None
   temp_bandit: TemperatureBandit | None = None
+  proposal_bandit: ProposalBandit | None = None
   if cfg.selection_strategy == "thompson":
     thompson_sampler = ThompsonSampler(
       m_samples=cfg.thompson_m_samples,
@@ -2516,6 +2587,12 @@ def run_pipeline(
         rng=rng,
       )
       print(f"  Temperature bandit: bins={temp_bandit.bins}")
+    if cfg.thompson_proposal_bandit:
+      proposal_bandit = ProposalBandit(
+        exploit_bias=cfg.thompson_exploit_bias,
+        rng=rng,
+      )
+      print(f"  Proposal bandit: methods={ProposalBandit.METHODS}")
 
   # Sequence deduplication cache: maps sequence string → (energy, details_dict).
   # Populated during evaluation; checked before folding to skip duplicates.
@@ -2581,6 +2658,20 @@ def run_pipeline(
         if seq not in seen_sequences:
           seen_sequences[seq] = (float(seed_energies[i]), seed_details[i])
       print(f"  Dedup cache: {len(seen_sequences)} seed sequences cached")
+
+    # Log seed sequences as cycle 0 in the CSV.
+    append_cycle_csv(
+      csv_path=cfg.output_dir / "all_sequences.csv",
+      cycle_index=0,
+      names=base_initial_names,
+      sequences=base_initial_seqs,
+      energies=seed_energies,
+      details=seed_details,
+      folding_results=seed_folding_results,
+      initial_seqs=base_initial_seqs,
+      prompt_seqs=None,
+      proposal_method="seed",
+    )
 
     # Register seed sequences as initial Thompson arms.
     if thompson_sampler is not None:
@@ -2694,13 +2785,23 @@ def run_pipeline(
         print(f"    T={t:.2f}: α={t_info['alpha']:.2f}, β={t_info['beta_param']:.2f}, "
               f"E[θ]={t_info['expected_reward']:.3f}, selected {t_info['times_selected']}x")
 
+    # Proposal bandit: sample which proposal method to use this cycle.
+    cycle_proposal_method: str = cfg.proposal_method
+    if proposal_bandit is not None:
+      cycle_proposal_method = proposal_bandit.select()
+      print(f"  Proposal bandit: sampled method={cycle_proposal_method}")
+      for p_info in proposal_bandit.get_state_dict():
+        m = p_info["method"]
+        print(f"    {m}: α={p_info['alpha']:.2f}, β={p_info['beta_param']:.2f}, "
+              f"E[θ]={p_info['expected_reward']:.3f}, selected {p_info['times_selected']}x")
+
     # Step 1 & 2: generation + evaluation, with retry logic for
     # enforce_template=False and deduplication.
     max_generation_attempts = 5
     dedup_retries = 0
     max_dedup_retries = 10  # cap retries to avoid infinite loops
     for attempt in range(1, max_generation_attempts + max_dedup_retries + 1):
-      if cfg.proposal_method == "random_mutation":
+      if cycle_proposal_method == "random_mutation":
         gen_names, gen_seqs = run_random_mutation_generation(
           seed_sequences=all_seqs,
           num_samples=cfg.profam_num_samples,
@@ -2822,6 +2923,7 @@ def run_pipeline(
       folding_results=folding_results,
       initial_seqs=base_initial_seqs,
       prompt_seqs=all_seqs,
+      proposal_method=cycle_proposal_method,
     )
 
     # Assign global unique IDs to this cycle's sequences.
@@ -2920,6 +3022,13 @@ def run_pipeline(
         print(f"  Temperature bandit UPDATE: T={cycle_temperature}, "
               f"reward={temp_reward:.4f}")
 
+      # Update proposal bandit with the same reward signal.
+      if proposal_bandit is not None:
+        prop_reward = thompson_progeny_reward if thompson_progeny_reward is not None else 0.0
+        proposal_bandit.update(cycle_proposal_method, prop_reward)
+        print(f"  Proposal bandit UPDATE: method={cycle_proposal_method}, "
+              f"reward={prop_reward:.4f}")
+
       # Register all progeny with finite ipSAE as new arms.
       parent_arm_id_for_progeny = getattr(thompson_sampler, '_last_selected_arm_id', None)
       n_registered = 0
@@ -3013,6 +3122,9 @@ def run_pipeline(
         thompson_cycle_state["sampled_temperature"] = cycle_temperature
       if temp_bandit is not None:
         thompson_cycle_state["temperature_bandit"] = temp_bandit.get_state_dict()
+      if proposal_bandit is not None:
+        thompson_cycle_state["proposal_method"] = cycle_proposal_method
+        thompson_cycle_state["proposal_bandit"] = proposal_bandit.get_state_dict()
 
       # Save full thompson arms state to dedicated file.
       arms_path = cfg.output_dir / "thompson_arms.json"
@@ -3040,6 +3152,9 @@ def run_pipeline(
         decision_entry["sampled_temperature"] = cycle_temperature
       if temp_bandit is not None:
         decision_entry["temperature_bandit"] = temp_bandit.get_state_dict()
+      if proposal_bandit is not None:
+        decision_entry["proposal_method"] = cycle_proposal_method
+        decision_entry["proposal_bandit"] = proposal_bandit.get_state_dict()
       with decision_log_path.open("a") as f:
         f.write(json.dumps(decision_entry) + "\n")
 
@@ -3058,6 +3173,7 @@ def run_pipeline(
         thompson_state=thompson_cycle_state,
         thompson_selected_arm_id=thompson_selected_arm_id,
         thompson_progeny_reward=thompson_progeny_reward,
+        proposal_method=cycle_proposal_method,
       )
       save_selected_structures(
         cycle_index=cycle,
@@ -3067,11 +3183,13 @@ def run_pipeline(
         pool_offset=pool_offset,
       )
 
-      # Apply discount decay to all posteriors (sequence arms + temperature).
+      # Apply discount decay to all posteriors (sequence arms + temperature + proposal).
       if cfg.thompson_discount < 1.0:
         thompson_sampler.decay_posteriors(cfg.thompson_discount)
         if temp_bandit is not None:
           temp_bandit.decay(cfg.thompson_discount)
+        if proposal_bandit is not None:
+          proposal_bandit.decay(cfg.thompson_discount)
         print(f"  Thompson discount: decayed posteriors by {cfg.thompson_discount}")
 
       # Restore original temperature on cfg so it doesn't leak.
@@ -3173,6 +3291,7 @@ def run_pipeline(
         elite_energy=elite_energy if cfg.elitism else None,
         elite_cycle=elite_cycle if cfg.elitism else None,
         annealing_temp=annealing_temp if cfg.annealing_initial_temp is not None else None,
+        proposal_method=cycle_proposal_method,
       )
       save_selected_structures(
         cycle_index=cycle,
