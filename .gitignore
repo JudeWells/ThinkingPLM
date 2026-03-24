@@ -12,3 +12,7 @@ profam-devo-manuscript
 nohup.out
 thompson_sample_nohup.out
 core
+logs/
+benchmark_binding/
+ipsae_aggregation_benchmark/
+.claude/
