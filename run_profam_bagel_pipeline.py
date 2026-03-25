@@ -2587,12 +2587,14 @@ def run_pipeline(
         rng=rng,
       )
       print(f"  Temperature bandit: bins={temp_bandit.bins}")
-    if cfg.thompson_proposal_bandit:
-      proposal_bandit = ProposalBandit(
-        exploit_bias=cfg.thompson_exploit_bias,
-        rng=rng,
-      )
-      print(f"  Proposal bandit: methods={ProposalBandit.METHODS}")
+  # Proposal bandit can be used with any selection_strategy (greedy or thompson).
+  # With greedy: elitist prompt selection + bandit chooses proposal method.
+  if cfg.thompson_proposal_bandit:
+    proposal_bandit = ProposalBandit(
+      exploit_bias=cfg.thompson_exploit_bias,
+      rng=rng,
+    )
+    print(f"  Proposal bandit: methods={ProposalBandit.METHODS}")
 
   # Sequence deduplication cache: maps sequence string → (energy, details_dict).
   # Populated during evaluation; checked before folding to skip duplicates.
@@ -3028,6 +3030,21 @@ def run_pipeline(
         proposal_bandit.update(cycle_proposal_method, prop_reward)
         print(f"  Proposal bandit UPDATE: method={cycle_proposal_method}, "
               f"reward={prop_reward:.4f}")
+
+    # --- Proposal bandit update when running with greedy selection ---
+    if proposal_bandit is not None and cfg.selection_strategy != "thompson":
+      reward_values_pb = extract_reward_term(details, cfg.thompson_reward_term)
+      finite_rewards_pb = [v for v in reward_values_pb if math.isfinite(v)]
+      if finite_rewards_pb:
+        best_ipsae_pb = min(finite_rewards_pb)
+        prop_reward = float(np.clip(-best_ipsae_pb, 0.0, 1.0))
+      else:
+        prop_reward = 0.0
+      proposal_bandit.update(cycle_proposal_method, prop_reward)
+      if cfg.thompson_discount < 1.0:
+        proposal_bandit.decay(cfg.thompson_discount)
+      print(f"  Proposal bandit UPDATE: method={cycle_proposal_method}, "
+            f"reward={prop_reward:.4f}")
 
       # Register all progeny with finite ipSAE as new arms.
       parent_arm_id_for_progeny = getattr(thompson_sampler, '_last_selected_arm_id', None)

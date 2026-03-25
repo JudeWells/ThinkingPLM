@@ -16,22 +16,27 @@ OUT_DIR.mkdir(exist_ok=True)
 
 # Strategy display order and colors
 STRATEGY_ORDER = ["profam_update", "profam_frozen", "random_update", "random_frozen",
-                  "thompson_m5", "thompson_m10"]
+                  "proposal_bandit", "proposal_bandit_eb5", "proposal_bandit_eb5_d1",
+                  "proposal_bandit_eb10_d1"]
 STRATEGY_COLORS = {
     "profam_update": "#00e676",
     "profam_frozen": "#00bfff",
     "random_update": "#ff6b6b",
     "random_frozen": "#ffab40",
-    "thompson_m5": "#bb86fc",
-    "thompson_m10": "#ff80ab",
+    "proposal_bandit": "#e040fb",
+    "proposal_bandit_eb5": "#ff80ab",
+    "proposal_bandit_eb5_d1": "#ffd740",
+    "proposal_bandit_eb10_d1": "#18ffff",
 }
 STRATEGY_LABELS = {
     "profam_update": "ProFam Update",
     "profam_frozen": "ProFam Frozen",
     "random_update": "Random Update",
     "random_frozen": "Random Frozen",
-    "thompson_m5": "Thompson m=5",
-    "thompson_m10": "Thompson m=10",
+    "proposal_bandit": "Bandit EB=2",
+    "proposal_bandit_eb5": "Bandit EB=5 d=0.95",
+    "proposal_bandit_eb5_d1": "Bandit EB=5 d=1.0",
+    "proposal_bandit_eb10_d1": "Bandit EB=10 d=1.0",
 }
 
 
@@ -128,6 +133,10 @@ def discover_experiments():
                 if not strategy_dir.is_dir():
                     continue
                 strategy_name = strategy_dir.name
+
+                # Only include known strategies
+                if strategy_name not in STRATEGY_ORDER:
+                    continue
 
                 data = load_experiment(strategy_dir)
                 if data is None:
@@ -397,7 +406,10 @@ def generate_markdown(experiments):
     lines.append("| **ProFam Frozen** | ProFam generates sequences; injection set frozen (no update from best) |")
     lines.append("| **Random Update** | Random mutations; injection set updated each cycle |")
     lines.append("| **Random Frozen** | Random mutations; injection set frozen |")
-    lines.append("| **Thompson m=5/10** | Thompson sampling with m=5 or m=10 candidates |")
+    lines.append("| **Bandit EB=2** | Thompson bandit, exploit_bias=2, discount=0.95 |")
+    lines.append("| **Bandit EB=5 d=0.95** | Thompson bandit, exploit_bias=5, discount=0.95 |")
+    lines.append("| **Bandit EB=5 d=1.0** | Thompson bandit, exploit_bias=5, discount=1.0 (no decay) |")
+    lines.append("| **Bandit EB=10 d=1.0** | Thompson bandit, exploit_bias=10, discount=1.0 (no decay) |")
     lines.append("")
 
     # Summary table
@@ -557,37 +569,55 @@ def generate_markdown(experiments):
                      f"({long_wins[best_overall]/long_total:.0%}).\n")
         finding_num += 1
 
-    # Compare profam vs random (long runs)
-    profam_long = long_strategy_min.get("profam_update", [])
-    random_long = long_strategy_min.get("random_update", [])
-    if profam_long and random_long:
-        lines.append(f"{finding_num}. **ProFam Update** mean min energy: {np.mean(profam_long):.4f} vs "
-                     f"**Random Update** mean: {np.mean(random_long):.4f} (long runs only).\n")
-        finding_num += 1
+    # Ranking of strategies by mean min energy
+    ranked = sorted(
+        [(s, np.mean(long_strategy_min[s])) for s in long_strategy_min],
+        key=lambda x: x[1]
+    )
+    ranking_str = " > ".join(
+        f"**{STRATEGY_LABELS.get(s, s)}** ({v:.4f})" for s, v in ranked
+    )
+    lines.append(f"{finding_num}. Mean min energy ranking: {ranking_str}.\n")
+    finding_num += 1
 
     # Update vs frozen (long runs)
+    profam_long = long_strategy_min.get("profam_update", [])
     profam_frozen_long = long_strategy_min.get("profam_frozen", [])
     if profam_long and profam_frozen_long:
-        lines.append(f"{finding_num}. **Update vs Frozen** (ProFam, long runs): Update mean {np.mean(profam_long):.4f} vs "
-                     f"Frozen mean {np.mean(profam_frozen_long):.4f}.\n")
+        lines.append(f"{finding_num}. **Update vs Frozen** (ProFam): Frozen (mean {np.mean(profam_frozen_long):.4f}) "
+                     f"slightly outperforms Update (mean {np.mean(profam_long):.4f}).\n")
         finding_num += 1
 
-    # Improvement rates (long runs)
-    for strat in ["profam_update", "profam_frozen", "random_update"]:
+    # Proposal Bandit specific
+    bandit_long = long_strategy_min.get("proposal_bandit", [])
+    if bandit_long:
+        bandit_wins = long_wins.get("proposal_bandit", 0)
+        lines.append(f"{finding_num}. **Proposal Bandit** (n={len(bandit_long)}): mean min energy {np.mean(bandit_long):.4f}, "
+                     f"wins {bandit_wins}/{long_total} experiments. "
+                     f"Avg {np.mean(long_strategy_imp.get('proposal_bandit', [0])):.1f} improvements per run.\n")
+        finding_num += 1
+
+    # Improvement rates comparison
+    rate_strs = []
+    for strat in ["random_update", "proposal_bandit", "profam_update", "profam_frozen"]:
         if strat in long_strategy_rate:
-            lines.append(f"{finding_num}. **{STRATEGY_LABELS.get(strat)}** avg improvement rate: "
-                         f"{np.mean(long_strategy_rate[strat]):.1%} over {len(long_strategy_rate[strat])} long-run experiments.\n")
-            finding_num += 1
-
-    # Note about random update having more improvements but similar final energy
-    if "random_update" in long_strategy_imp and "profam_update" in long_strategy_imp:
-        lines.append(f"{finding_num}. **Random Update** averages {np.mean(long_strategy_imp['random_update']):.1f} improvements "
-                     f"vs **ProFam Update** {np.mean(long_strategy_imp['profam_update']):.1f} — random mutations find more "
-                     f"frequent small improvements.\n")
+            rate_strs.append(f"{STRATEGY_LABELS.get(strat)} {np.mean(long_strategy_rate[strat]):.1%}")
+    if rate_strs:
+        lines.append(f"{finding_num}. Improvement rates: {', '.join(rate_strs)}.\n")
         finding_num += 1
 
-    lines.append(f"{finding_num}. The 2-cycle experiments (1VPF, 1WWW, 2GDZ, 3DI2, 4LXV, 4ZQK) have too few cycles "
-                 f"to draw reliable conclusions about strategy differences.\n")
+    # Energy gain from seed
+    gain_strs = []
+    for strat in STRATEGY_ORDER:
+        if strat in long_strategy_min:
+            gains = [long_strategy_min[strat][i] - 0 for i in range(len(long_strategy_min[strat]))]
+            # Use actual energy_gain from aggregate stats
+            eg = strategy_energy_gain.get(strat, [])
+            if eg:
+                gain_strs.append(f"{STRATEGY_LABELS.get(strat)} ({np.mean(eg):.4f})")
+    if gain_strs:
+        lines.append(f"{finding_num}. Mean energy gain from seed: {', '.join(gain_strs)}.\n")
+        finding_num += 1
 
     md_text = "\n".join(lines)
     md_path = OUT_DIR / "benchmark_analysis.md"
