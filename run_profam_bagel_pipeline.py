@@ -2574,7 +2574,7 @@ def run_pipeline(
   thompson_sampler: ThompsonSampler | None = None
   temp_bandit: TemperatureBandit | None = None
   proposal_bandit: ProposalBandit | None = None
-  if cfg.selection_strategy == "thompson":
+  if cfg.selection_strategy == "thompson" or cfg.thompson_proposal_bandit:
     thompson_sampler = ThompsonSampler(
       m_samples=cfg.thompson_m_samples,
       exploit_bias=cfg.thompson_exploit_bias,
@@ -3034,6 +3034,8 @@ def run_pipeline(
     # --- Proposal bandit update when running with greedy selection ---
     if proposal_bandit is not None and cfg.selection_strategy != "thompson":
       reward_values_pb = extract_reward_term(details, cfg.thompson_reward_term)
+      n_finite = sum(1 for v in reward_values_pb if math.isfinite(v))
+      n_inf = len(reward_values_pb) - n_finite
       finite_rewards_pb = [v for v in reward_values_pb if math.isfinite(v)]
       if finite_rewards_pb:
         best_ipsae_pb = min(finite_rewards_pb)
@@ -3049,7 +3051,7 @@ def run_pipeline(
       # Register all progeny with finite ipSAE as new arms.
       parent_arm_id_for_progeny = getattr(thompson_sampler, '_last_selected_arm_id', None)
       n_registered = 0
-      for i, (name, seq, ipsae_val) in enumerate(zip(gen_names, gen_seqs, reward_values)):
+      for i, (name, seq, ipsae_val) in enumerate(zip(gen_names, gen_seqs, reward_values_pb)):
         if math.isfinite(ipsae_val):
           arm = thompson_sampler.add_arm(
             sequence=seq, name=name, ipsae_raw=ipsae_val,
@@ -3161,7 +3163,7 @@ def run_pipeline(
         "progeny_finite_count": n_finite,
         "total_arms": len(thompson_sampler.arms),
         "progeny_ipsae_values": [
-          round(v, 6) if math.isfinite(v) else None for v in reward_values
+          round(v, 6) if math.isfinite(v) else None for v in reward_values_pb
         ],
         "top_10_arms": top_arms_summary,
       }

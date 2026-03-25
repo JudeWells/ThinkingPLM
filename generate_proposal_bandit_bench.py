@@ -48,7 +48,7 @@ max_mutations: 5
 
 initial_fasta: configs/sequences/{initial_fasta}
 energy_config: configs/energy/{energy_config}
-output_dir: outputs/bench/{target}/{scaffold}/proposal_bandit_eb5
+output_dir: outputs/bench/{target}/{scaffold}/proposal_bandit_eb10_d1
 random_seed: {random_seed}
 
 proposal_method: profam
@@ -58,15 +58,15 @@ freeze_prompt: false
 selection_strategy: thompson
 thompson_m_samples: 5
 thompson_reward_term: ipSAE
-thompson_exploit_bias: 5.0
+thompson_exploit_bias: 10.0
 thompson_temperature_bins: [0.6, 0.8, 1.0]
-thompson_discount: 0.95
+thompson_discount: 1.0
 thompson_proposal_bandit: true
 deduplicate_sequences: true
 """
 
 SLURM_TEMPLATE = """#!/bin/bash
-#SBATCH --job-name=bench_{target}_{scaffold}_bandit_eb5
+#SBATCH --job-name=bench_{target}_{scaffold}_bandit_eb10_d1
 #SBATCH --output=/projects/u6bz/jude/ThinkingPLM/logs/%x_%j.out
 #SBATCH --error=/projects/u6bz/jude/ThinkingPLM/logs/%x_%j.err
 #SBATCH --nodes=1
@@ -106,7 +106,7 @@ def main():
             random_seed = random.randint(100000, 999999)
 
             # Config filename
-            config_name = f"bench_{target}_{scaffold}_proposal_bandit_eb5.yaml"
+            config_name = f"bench_{target}_{scaffold}_proposal_bandit_eb10_d1.yaml"
             config_path = os.path.join(config_dir, config_name)
 
             # Generate config content
@@ -124,7 +124,7 @@ def main():
             print(f"Created config: {config_name}")
 
             # SLURM script filename
-            slurm_name = f"run_bench_{target}_{scaffold}_proposal_bandit_eb5.sh"
+            slurm_name = f"run_bench_{target}_{scaffold}_proposal_bandit_eb10_d1.sh"
             slurm_path = os.path.join(slurm_dir, slurm_name)
 
             # Generate SLURM content
@@ -143,7 +143,7 @@ def main():
             all_slurm_scripts.append(slurm_name)
 
     # Create a master submission script
-    submit_all_path = os.path.join(slurm_dir, "submit_all_proposal_bandit_eb5.sh")
+    submit_all_path = os.path.join(slurm_dir, "submit_all_proposal_bandit_eb10_d1.sh")
     with open(submit_all_path, "w") as f:
         f.write("#!/bin/bash\n")
         f.write("# Submit all proposal bandit benchmark jobs\n\n")
@@ -154,7 +154,7 @@ def main():
     os.chmod(submit_all_path, 0o755)
 
     print(f"\nCreated {len(all_slurm_scripts)} configs and SLURM scripts")
-    print(f"Run 'slurm_scripts/submit_all_proposal_bandit_eb5.sh' to submit all jobs")
+    print(f"Run 'slurm_scripts/submit_all_proposal_bandit_eb10_d1.sh' to submit all jobs")
 
 if __name__ == "__main__":
     main()
