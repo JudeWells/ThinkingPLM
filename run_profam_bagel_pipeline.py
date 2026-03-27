@@ -77,6 +77,9 @@ import torch
 from biotite.structure.io.pdb import PDBFile  # type: ignore
 from biotite.structure.io.pdbx import CIFFile, get_structure  # type: ignore
 
+from Bio import Align  # type: ignore
+from Bio.Align import substitution_matrices  # type: ignore
+
 try:
   import yaml  # type: ignore
 except ImportError as e:  # pragma: no cover - import-time check
@@ -113,6 +116,42 @@ ROOT_DIR = Path(__file__).resolve().parent
 # ---------------------------------------------------------------------------
 # Thompson Sampling for conditioning sequence selection
 # ---------------------------------------------------------------------------
+
+
+def compute_sequence_identity(seq1: str, seq2: str) -> float:
+  """Compute sequence identity using global pairwise alignment with BLOSUM62.
+
+  Returns: identity as fraction [0, 1] = identical_positions / max(len(seq1), len(seq2))
+
+  Using max sequence length as denominator penalizes length differences
+  (insertions/deletions) and gives a conservative identity measure.
+  """
+  if not seq1 or not seq2:
+    return 0.0
+
+  aligner = Align.PairwiseAligner()
+  aligner.mode = "global"
+  aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+  aligner.open_gap_score = -10
+  aligner.extend_gap_score = -0.5
+
+  alignments = aligner.align(seq1, seq2)
+  if not alignments:
+    return 0.0
+
+  # Take best alignment
+  best_alignment = alignments[0]
+  aligned_seq1, aligned_seq2 = best_alignment[0], best_alignment[1]
+
+  # Count identical positions (excluding gaps)
+  identical = sum(
+    1 for a, b in zip(aligned_seq1, aligned_seq2)
+    if a == b and a != '-' and b != '-'
+  )
+
+  # Normalize by max original sequence length
+  max_len = max(len(seq1), len(seq2))
+  return identical / max_len if max_len > 0 else 0.0
 
 
 @dataclass
@@ -237,6 +276,84 @@ class ThompsonSampler:
     for arm in self.arms.values():
       arm.alpha = 1.0 + discount * (arm.alpha - 1.0)
       arm.beta_param = 1.0 + discount * (arm.beta_param - 1.0)
+
+  def prune_to_top_k_diverse(
+    self,
+    k: int,
+    max_identity: float = 0.95,
+  ) -> Dict[str, Any]:
+    """Keep top-K arms ensuring diversity via sequence identity threshold.
+
+    Uses greedy selection: iterates through arms sorted by posterior mean
+    (expected reward = alpha / (alpha + beta)), keeping an arm only if its
+    sequence identity to all already-retained arms is below max_identity.
+
+    Args:
+      k: Maximum number of arms to retain.
+      max_identity: Maximum allowed sequence identity between any two retained
+                    arms. Arms more similar than this are considered redundant.
+                    Default 0.95 (95% identity) allows closely related variants
+                    while filtering near-duplicates.
+
+    Returns:
+      Dict with pruning statistics: arms_before, arms_after, retained_ids,
+      pruned_ids, and pairwise_identities of retained arms.
+    """
+    arms_before = len(self.arms)
+    if arms_before <= k:
+      return {
+        "arms_before": arms_before,
+        "arms_after": arms_before,
+        "retained_ids": list(self.arms.keys()),
+        "pruned_ids": [],
+        "pairwise_identities": [],
+      }
+
+    # Sort all arms by posterior mean (expected reward), highest first
+    # Posterior mean = alpha / (alpha + beta) from Beta distribution
+    sorted_arms = sorted(
+      self.arms.values(),
+      key=lambda a: a.alpha / (a.alpha + a.beta_param),
+      reverse=True,  # higher expected reward = better
+    )
+
+    retained: List[ThompsonArm] = []
+    for arm in sorted_arms:
+      if len(retained) >= k:
+        break
+
+      # Check diversity: must be < max_identity to all retained arms
+      is_diverse = all(
+        compute_sequence_identity(arm.sequence, r.sequence) < max_identity
+        for r in retained
+      )
+      if is_diverse:
+        retained.append(arm)
+
+    # Compute pairwise identities for logging
+    pairwise_identities = []
+    for i, arm_i in enumerate(retained):
+      for j, arm_j in enumerate(retained):
+        if i < j:
+          identity = compute_sequence_identity(arm_i.sequence, arm_j.sequence)
+          pairwise_identities.append({
+            "arm_i": arm_i.arm_id,
+            "arm_j": arm_j.arm_id,
+            "identity": identity,
+          })
+
+    # Update arms dict to only contain retained arms
+    retained_ids = {a.arm_id for a in retained}
+    pruned_ids = [aid for aid in self.arms.keys() if aid not in retained_ids]
+    self.arms = {aid: arm for aid, arm in self.arms.items() if aid in retained_ids}
+
+    return {
+      "arms_before": arms_before,
+      "arms_after": len(self.arms),
+      "retained_ids": list(retained_ids),
+      "pruned_ids": pruned_ids,
+      "pairwise_identities": pairwise_identities,
+    }
 
 
 class TemperatureBandit:
@@ -406,6 +523,8 @@ class PipelineConfig:
   thompson_temperature_bins: List[float] | None = None  # e.g. [0.6, 0.8, 1.0, 1.3]; None = fixed temperature
   thompson_discount: float = 1.0          # per-cycle decay on posteriors (1.0 = no decay)
   thompson_proposal_bandit: bool = False   # True = Thompson bandit over proposal methods (profam vs random_mutation)
+  thompson_max_arms: int = 0              # max arms to retain (0 = unlimited); prunes to top-K diverse arms
+  thompson_max_identity: float = 0.95     # max sequence identity between retained arms (diversity threshold)
   deduplicate_sequences: bool = True       # skip folding for already-seen sequences, retry generation
 
   random_init: bool = False                # if True, generate a random initial sequence instead of reading from FASTA
@@ -500,6 +619,8 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     ),
     thompson_discount=float(pick("thompson_discount", 1.0)),
     thompson_proposal_bandit=bool(pick("thompson_proposal_bandit", False)),
+    thompson_max_arms=int(pick("thompson_max_arms", 0)),
+    thompson_max_identity=float(pick("thompson_max_identity", 0.95)),
     deduplicate_sequences=bool(pick("deduplicate_sequences", True)),
     random_init=bool(pick("random_init", False)),
     random_init_max_residues=int(pick("random_init_max_residues", 80)),
@@ -2736,6 +2857,20 @@ def run_pipeline(
         else:
           print(f"    SKIPPED {name}: {cfg.thompson_reward_term}=inf (folding failure)")
       print(f"  Thompson: {n_seed_registered}/{len(base_initial_seqs)} seeds registered as arms")
+
+      # Prune to top-K diverse arms if configured.
+      if cfg.thompson_max_arms > 0:
+        prune_stats = thompson_sampler.prune_to_top_k_diverse(
+          k=cfg.thompson_max_arms,
+          max_identity=cfg.thompson_max_identity,
+        )
+        if prune_stats["arms_before"] > prune_stats["arms_after"]:
+          print(f"  Thompson PRUNING: {prune_stats['arms_before']} → "
+                f"{prune_stats['arms_after']} arms "
+                f"(max_identity={cfg.thompson_max_identity:.2f})")
+          print(f"    retained: {prune_stats['retained_ids']}")
+          print(f"    pruned: {prune_stats['pruned_ids']}")
+
       # Set the best seed arm as the initial parent — cycle 1's progeny
       # are conditioned on the seeds, so the best seed should get credit.
       if thompson_sampler.arms:
@@ -3108,6 +3243,19 @@ def run_pipeline(
           n_registered += 1
       print(f"  Thompson: registered {n_registered} new arms "
             f"(total arms: {len(thompson_sampler.arms)})")
+
+      # Prune to top-K diverse arms if configured.
+      if cfg.thompson_max_arms > 0:
+        prune_stats = thompson_sampler.prune_to_top_k_diverse(
+          k=cfg.thompson_max_arms,
+          max_identity=cfg.thompson_max_identity,
+        )
+        if prune_stats["arms_before"] > prune_stats["arms_after"]:
+          print(f"  Thompson PRUNING: {prune_stats['arms_before']} → "
+                f"{prune_stats['arms_after']} arms "
+                f"(max_identity={cfg.thompson_max_identity:.2f})")
+          print(f"    retained: {prune_stats['retained_ids']}")
+          print(f"    pruned: {prune_stats['pruned_ids']}")
 
       # Select next arm via Thompson sampling — log the top candidates.
       b = thompson_sampler.exploit_bias
