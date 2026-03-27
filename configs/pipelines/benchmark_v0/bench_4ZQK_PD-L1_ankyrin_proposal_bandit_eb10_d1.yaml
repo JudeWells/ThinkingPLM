@@ -38,6 +38,5 @@ thompson_m_samples: 5
 thompson_reward_term: ipSAE
 thompson_exploit_bias: 10.0
 thompson_temperature_bins: [0.6, 0.8, 1.0]
-thompson_discount: 1.0
 thompson_proposal_bandit: true
 deduplicate_sequences: true

@@ -77,8 +77,23 @@ import torch
 from biotite.structure.io.pdb import PDBFile  # type: ignore
 from biotite.structure.io.pdbx import CIFFile, get_structure  # type: ignore
 
-from Bio import Align  # type: ignore
-from Bio.Align import substitution_matrices  # type: ignore
+from pipeline.bandits import (
+    ProposalBandit,
+    TemperatureBandit,
+    ThompsonSampler,
+)
+from pipeline.logging import (
+    append_cycle_csv,
+    save_selected_structures,
+    update_cycle_log,
+)
+from pipeline.plotting import make_energy_summary_plot
+from pipeline.utils import (
+    compute_avg_sequence_similarity,
+    extract_reward_term,
+    sample_subset_indices,
+    softmax_from_energies,
+)
 
 try:
   import yaml  # type: ignore
@@ -92,7 +107,6 @@ import bagel as bg  # type: ignore
 from bagel.oracles import ESMFold  # type: ignore
 from bagel.oracles.folding import FoldingOracle, AlphaFast, Boltz  # type: ignore
 from bagel.oracles.folding.utils import sequence_from_atomarray  # type: ignore
-from bagel.utils import get_atomarray_in_residue_range  # type: ignore
 
 # ProFam — installed via: pip install git+https://github.com/alex-hh/profam.git
 from src.data.objects import ProteinDocument  # type: ignore
@@ -113,368 +127,6 @@ from src.utils.utils import seed_all  # type: ignore
 ROOT_DIR = Path(__file__).resolve().parent
 
 
-# ---------------------------------------------------------------------------
-# Thompson Sampling for conditioning sequence selection
-# ---------------------------------------------------------------------------
-
-
-def compute_sequence_identity(seq1: str, seq2: str) -> float:
-  """Compute sequence identity using global pairwise alignment with BLOSUM62.
-
-  Returns: identity as fraction [0, 1] = identical_positions / max(len(seq1), len(seq2))
-
-  Using max sequence length as denominator penalizes length differences
-  (insertions/deletions) and gives a conservative identity measure.
-  """
-  if not seq1 or not seq2:
-    return 0.0
-
-  aligner = Align.PairwiseAligner()
-  aligner.mode = "global"
-  aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
-  aligner.open_gap_score = -10
-  aligner.extend_gap_score = -0.5
-
-  alignments = aligner.align(seq1, seq2)
-  if not alignments:
-    return 0.0
-
-  # Take best alignment
-  best_alignment = alignments[0]
-  aligned_seq1, aligned_seq2 = best_alignment[0], best_alignment[1]
-
-  # Count identical positions (excluding gaps)
-  identical = sum(
-    1 for a, b in zip(aligned_seq1, aligned_seq2)
-    if a == b and a != '-' and b != '-'
-  )
-
-  # Normalize by max original sequence length
-  max_len = max(len(seq1), len(seq2))
-  return identical / max_len if max_len > 0 else 0.0
-
-
-@dataclass
-class ThompsonArm:
-  arm_id: int
-  sequence: str
-  name: str
-  alpha: float              # Beta posterior α
-  beta_param: float         # Beta posterior β
-  ipsae_raw: float          # Raw ipSAE at creation
-  reward: float             # clamp(-ipsae_raw, 0, 1)
-  parent_arm_id: int | None
-  created_at_cycle: int
-  times_selected: int = 0
-  total_reward_credited: float = 0.0
-
-
-class ThompsonSampler:
-  """Manages a pool of arms for Thompson sampling over conditioning sequences."""
-
-  def __init__(
-    self,
-    m_samples: int = 1,
-    exploit_bias: float = 1.0,
-    rng: np.random.Generator | None = None,
-  ):
-    self.m_samples = max(1, m_samples)
-    self.exploit_bias = max(1.0, exploit_bias)
-    self.rng = rng if rng is not None else np.random.default_rng()
-    self.arms: Dict[int, ThompsonArm] = {}
-    self._next_arm_id = 0
-
-  @staticmethod
-  def _ipsae_to_reward(ipsae_raw: float) -> float:
-    """Convert raw ipSAE (negative = better) to reward in [0, 1]."""
-    return float(np.clip(-ipsae_raw, 0.0, 1.0))
-
-  def add_arm(
-    self,
-    sequence: str,
-    name: str,
-    ipsae_raw: float,
-    parent_arm_id: int | None,
-    cycle: int,
-  ) -> ThompsonArm:
-    """Register a new arm with Beta(1 + r, 2 - r) prior from its own ipSAE."""
-    reward = self._ipsae_to_reward(ipsae_raw)
-    arm = ThompsonArm(
-      arm_id=self._next_arm_id,
-      sequence=sequence,
-      name=name,
-      alpha=1.0 + reward,
-      beta_param=2.0 - reward,
-      ipsae_raw=ipsae_raw,
-      reward=reward,
-      parent_arm_id=parent_arm_id,
-      created_at_cycle=cycle,
-    )
-    self.arms[arm.arm_id] = arm
-    self._next_arm_id += 1
-    return arm
-
-  def select_arm(self) -> ThompsonArm:
-    """Thompson sampling: sample θ ~ Beta(α*b, β*b) per arm, pick max.
-
-    When exploit_bias > 1, both α and β are scaled up before sampling,
-    which concentrates the Beta distribution around its mean — making
-    selection more greedy (exploitative).  exploit_bias=1.0 is standard
-    Thompson sampling.
-    """
-    if not self.arms:
-      raise RuntimeError("No arms registered in ThompsonSampler.")
-    best_arm = None
-    best_theta = -1.0
-    b = self.exploit_bias
-    for arm in self.arms.values():
-      # Sample m times and take the max (max-seeking variant).
-      thetas = self.rng.beta(arm.alpha * b, arm.beta_param * b, size=self.m_samples)
-      theta = float(np.max(thetas))
-      if theta > best_theta:
-        best_theta = theta
-        best_arm = arm
-    assert best_arm is not None
-    best_arm.times_selected += 1
-    return best_arm
-
-  def update_arm(self, arm_id: int, progeny_ipsae: float) -> None:
-    """Update the chosen arm's posterior with the progeny's reward."""
-    arm = self.arms[arm_id]
-    reward = self._ipsae_to_reward(progeny_ipsae)
-    arm.alpha += reward
-    arm.beta_param += (1.0 - reward)
-    arm.total_reward_credited += reward
-
-  def get_state_dict(self) -> List[Dict[str, Any]]:
-    """Serialize all arm states for JSON logging."""
-    result = []
-    for arm in self.arms.values():
-      result.append({
-        "arm_id": arm.arm_id,
-        "sequence": arm.sequence,
-        "name": arm.name,
-        "alpha": arm.alpha,
-        "beta_param": arm.beta_param,
-        "ipsae_raw": arm.ipsae_raw,
-        "reward": arm.reward,
-        "parent_arm_id": arm.parent_arm_id,
-        "created_at_cycle": arm.created_at_cycle,
-        "times_selected": arm.times_selected,
-        "total_reward_credited": arm.total_reward_credited,
-      })
-    return result
-
-  def decay_posteriors(self, discount: float) -> None:
-    """Apply exponential decay to all arm posteriors.
-
-    Shrinks α and β toward the prior (1, 1) by the discount factor,
-    making the sampler more responsive to recent observations.
-    """
-    if discount >= 1.0:
-      return
-    for arm in self.arms.values():
-      arm.alpha = 1.0 + discount * (arm.alpha - 1.0)
-      arm.beta_param = 1.0 + discount * (arm.beta_param - 1.0)
-
-  def prune_to_top_k_diverse(
-    self,
-    k: int,
-    max_identity: float = 0.95,
-  ) -> Dict[str, Any]:
-    """Keep top-K arms ensuring diversity via sequence identity threshold.
-
-    Uses greedy selection: iterates through arms sorted by posterior mean
-    (expected reward = alpha / (alpha + beta)), keeping an arm only if its
-    sequence identity to all already-retained arms is below max_identity.
-
-    Args:
-      k: Maximum number of arms to retain.
-      max_identity: Maximum allowed sequence identity between any two retained
-                    arms. Arms more similar than this are considered redundant.
-                    Default 0.95 (95% identity) allows closely related variants
-                    while filtering near-duplicates.
-
-    Returns:
-      Dict with pruning statistics: arms_before, arms_after, retained_ids,
-      pruned_ids, and pairwise_identities of retained arms.
-    """
-    arms_before = len(self.arms)
-    if arms_before <= k:
-      return {
-        "arms_before": arms_before,
-        "arms_after": arms_before,
-        "retained_ids": list(self.arms.keys()),
-        "pruned_ids": [],
-        "pairwise_identities": [],
-      }
-
-    # Sort all arms by posterior mean (expected reward), highest first
-    # Posterior mean = alpha / (alpha + beta) from Beta distribution
-    sorted_arms = sorted(
-      self.arms.values(),
-      key=lambda a: a.alpha / (a.alpha + a.beta_param),
-      reverse=True,  # higher expected reward = better
-    )
-
-    retained: List[ThompsonArm] = []
-    for arm in sorted_arms:
-      if len(retained) >= k:
-        break
-
-      # Check diversity: must be < max_identity to all retained arms
-      is_diverse = all(
-        compute_sequence_identity(arm.sequence, r.sequence) < max_identity
-        for r in retained
-      )
-      if is_diverse:
-        retained.append(arm)
-
-    # Compute pairwise identities for logging
-    pairwise_identities = []
-    for i, arm_i in enumerate(retained):
-      for j, arm_j in enumerate(retained):
-        if i < j:
-          identity = compute_sequence_identity(arm_i.sequence, arm_j.sequence)
-          pairwise_identities.append({
-            "arm_i": arm_i.arm_id,
-            "arm_j": arm_j.arm_id,
-            "identity": identity,
-          })
-
-    # Update arms dict to only contain retained arms
-    retained_ids = {a.arm_id for a in retained}
-    pruned_ids = [aid for aid in self.arms.keys() if aid not in retained_ids]
-    self.arms = {aid: arm for aid, arm in self.arms.items() if aid in retained_ids}
-
-    return {
-      "arms_before": arms_before,
-      "arms_after": len(self.arms),
-      "retained_ids": list(retained_ids),
-      "pruned_ids": pruned_ids,
-      "pairwise_identities": pairwise_identities,
-    }
-
-
-class TemperatureBandit:
-  """Thompson sampler over a discrete set of temperature bins."""
-
-  def __init__(
-    self,
-    bins: List[float],
-    exploit_bias: float = 1.0,
-    rng: np.random.Generator | None = None,
-  ):
-    self.bins = sorted(bins)
-    self.exploit_bias = max(1.0, exploit_bias)
-    self.rng = rng if rng is not None else np.random.default_rng()
-    # Each bin gets a Beta(1, 1) = uniform prior.
-    self.alphas = {t: 1.0 for t in self.bins}
-    self.betas = {t: 1.0 for t in self.bins}
-    self.times_selected: Dict[float, int] = {t: 0 for t in self.bins}
-    self.total_reward: Dict[float, float] = {t: 0.0 for t in self.bins}
-
-  def select(self) -> float:
-    """Thompson-sample a temperature bin."""
-    best_temp = self.bins[0]
-    best_theta = -1.0
-    b = self.exploit_bias
-    for t in self.bins:
-      theta = float(self.rng.beta(self.alphas[t] * b, self.betas[t] * b))
-      if theta > best_theta:
-        best_theta = theta
-        best_temp = t
-    self.times_selected[best_temp] += 1
-    return best_temp
-
-  def update(self, temperature: float, reward: float) -> None:
-    """Update the chosen bin's posterior with the observed reward."""
-    self.alphas[temperature] += reward
-    self.betas[temperature] += (1.0 - reward)
-    self.total_reward[temperature] += reward
-
-  def decay(self, discount: float) -> None:
-    """Apply exponential decay toward the prior."""
-    if discount >= 1.0:
-      return
-    for t in self.bins:
-      self.alphas[t] = 1.0 + discount * (self.alphas[t] - 1.0)
-      self.betas[t] = 1.0 + discount * (self.betas[t] - 1.0)
-
-  def get_state_dict(self) -> List[Dict[str, Any]]:
-    """Serialize state for JSON logging."""
-    result = []
-    for t in self.bins:
-      a, b = self.alphas[t], self.betas[t]
-      result.append({
-        "temperature": t,
-        "alpha": a,
-        "beta_param": b,
-        "expected_reward": a / (a + b),
-        "times_selected": self.times_selected[t],
-        "total_reward": self.total_reward[t],
-      })
-    return result
-
-
-class ProposalBandit:
-  """Thompson sampler over proposal methods (profam vs random_mutation)."""
-
-  METHODS = ["profam", "random_mutation"]
-
-  def __init__(
-    self,
-    exploit_bias: float = 1.0,
-    rng: np.random.Generator | None = None,
-  ):
-    self.exploit_bias = max(1.0, exploit_bias)
-    self.rng = rng if rng is not None else np.random.default_rng()
-    self.alphas = {m: 1.0 for m in self.METHODS}
-    self.betas = {m: 1.0 for m in self.METHODS}
-    self.times_selected: Dict[str, int] = {m: 0 for m in self.METHODS}
-    self.total_reward: Dict[str, float] = {m: 0.0 for m in self.METHODS}
-
-  def select(self) -> str:
-    """Thompson-sample a proposal method."""
-    best_method = self.METHODS[0]
-    best_theta = -1.0
-    b = self.exploit_bias
-    for m in self.METHODS:
-      theta = float(self.rng.beta(self.alphas[m] * b, self.betas[m] * b))
-      if theta > best_theta:
-        best_theta = theta
-        best_method = m
-    self.times_selected[best_method] += 1
-    return best_method
-
-  def update(self, method: str, reward: float) -> None:
-    """Update the chosen method's posterior with the observed reward."""
-    self.alphas[method] += reward
-    self.betas[method] += (1.0 - reward)
-    self.total_reward[method] += reward
-
-  def decay(self, discount: float) -> None:
-    """Apply exponential decay toward the prior."""
-    if discount >= 1.0:
-      return
-    for m in self.METHODS:
-      self.alphas[m] = 1.0 + discount * (self.alphas[m] - 1.0)
-      self.betas[m] = 1.0 + discount * (self.betas[m] - 1.0)
-
-  def get_state_dict(self) -> List[Dict[str, Any]]:
-    """Serialize state for JSON logging."""
-    result = []
-    for m in self.METHODS:
-      a, b = self.alphas[m], self.betas[m]
-      result.append({
-        "method": m,
-        "alpha": a,
-        "beta_param": b,
-        "expected_reward": a / (a + b),
-        "times_selected": self.times_selected[m],
-        "total_reward": self.total_reward[m],
-      })
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +173,6 @@ class PipelineConfig:
   thompson_reward_term: str = "ipSAE"     # energy term name for reward
   thompson_exploit_bias: float = 1.0      # >1 = more exploitation (concentrate posteriors)
   thompson_temperature_bins: List[float] | None = None  # e.g. [0.6, 0.8, 1.0, 1.3]; None = fixed temperature
-  thompson_discount: float = 1.0          # per-cycle decay on posteriors (1.0 = no decay)
   thompson_proposal_bandit: bool = False   # True = Thompson bandit over proposal methods (profam vs random_mutation)
   thompson_max_arms: int = 0              # max arms to retain (0 = unlimited); prunes to top-K diverse arms
   thompson_max_identity: float = 0.95     # max sequence identity between retained arms (diversity threshold)
@@ -617,7 +268,6 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
       if pick("thompson_temperature_bins", None) is None
       else [float(x) for x in pick("thompson_temperature_bins")]
     ),
-    thompson_discount=float(pick("thompson_discount", 1.0)),
     thompson_proposal_bandit=bool(pick("thompson_proposal_bandit", False)),
     thompson_max_arms=int(pick("thompson_max_arms", 0)),
     thompson_max_identity=float(pick("thompson_max_identity", 0.95)),
@@ -919,16 +569,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ),
   )
   p.add_argument(
-    "--thompson_discount",
-    type=float,
-    default=None,
-    help=(
-      "Per-cycle exponential decay on all Thompson posteriors. Shrinks α and β "
-      "toward the prior each cycle, making the sampler more responsive to recent "
-      "observations. 1.0 = no decay (default), 0.95 = moderate forgetting."
-    ),
-  )
-  p.add_argument(
     "--deduplicate_sequences",
     type=str,
     default=None,
@@ -1022,7 +662,6 @@ def run_profam_generation(
   cycle_dir: Path,
   model: Any,
   device: str,
-  fixed_positions: Dict[int, str] | None = None,
 ) -> Tuple[List[str], List[str]]:
   """
   Generate sequences using ProFam's Python API.
@@ -1050,14 +689,6 @@ def run_profam_generation(
     max_gen_len = default_cap
   else:
     max_gen_len = min(int(cfg.profam_max_generated_length), default_cap)
-
-  # Convert fixed_positions to token IDs if provided.
-  fixed_token_positions = None
-  if fixed_positions is not None:
-    fixed_token_positions = {
-      int(k): model.tokenizer.convert_tokens_to_ids(v)
-      for k, v in fixed_positions.items()
-    }
 
   doc_token = "[RAW]"
 
@@ -1147,15 +778,6 @@ def run_profam_generation(
       maximum_retries=5,
       repeat_guard=True,
     )
-    # fixed_positions is only available in newer ProFam versions.
-    import inspect
-    if "fixed_positions" in inspect.signature(sampler_obj.sample_seqs).parameters:
-      sample_kwargs["fixed_positions"] = fixed_token_positions
-    elif fixed_token_positions:
-      print(
-        "WARNING: fixed_positions requested but not supported by this "
-        "ProFam version — ignoring constrained residues."
-      )
     sequences, scores, _ = sampler_obj.sample_seqs(**sample_kwargs)
 
   # Build accession names (matching the format used by generate_sequences.py).
@@ -1780,73 +1402,6 @@ def build_energy_terms_for_chain(
   return terms
 
 
-def extract_fixed_residues_from_energy_config(
-  energy_cfg: Dict[str, Any],
-) -> Dict[int, str] | None:
-  """
-  Scan the energy config for TemplateMatchEnergy entries and extract a mapping
-  from generated-sequence position to amino-acid character.
-
-  The ``residues`` list in the energy config gives 0-based positions that
-  refer to the same locations in both the generated sequence and the template
-  chain.  For each position ``p`` in ``residues``, the amino acid at
-  position ``p`` of the template chain is the identity that should be forced
-  during generation.
-
-  Returns ``None`` if no TemplateMatchEnergy is found.
-  """
-  energies_spec = energy_cfg.get("energies", [])
-  fixed: Dict[int, str] = {}
-
-  for entry in energies_spec:
-    if not isinstance(entry, dict):
-      continue
-    if entry.get("type") != "TemplateMatchEnergy":
-      continue
-
-    kwargs = dict(entry.get("kwargs", {}) or {})
-
-    # Load template structure (supports local file or PDB code download).
-    atoms, _ = _load_structure_from_spec(kwargs)
-    if atoms is None:
-      raise ValueError(
-        "TemplateMatchEnergy requires 'template_structure_path' or "
-        "'pdb_code' in kwargs."
-      )
-
-    # Full amino-acid sequence of the template chain.
-    template_seq = sequence_from_atomarray(atoms)
-
-    # The `residues` specification gives 0-based positions that refer to the
-    # same locations in both the generated sequence and the template chain.
-    # Normalise compact range strings (e.g. "0-43") to integer lists.
-    raw_spec = _normalise_residue_spec(kwargs.get("residues", {}))
-    if isinstance(raw_spec, dict):
-      residue_indices = raw_spec.get("GEN", [])
-    else:
-      residue_indices = raw_spec
-    # "all" means every position in the template chain.
-    if isinstance(residue_indices, str) and residue_indices.lower() == "all":
-      residue_indices = list(range(len(template_seq)))
-    if not isinstance(residue_indices, list):
-      raise ValueError(
-        "'residues' must be a dict with a 'GEN' key mapping to integer indices, "
-        "a range string, or 'all'."
-      )
-
-    max_idx = max(int(i) for i in residue_indices) if residue_indices else -1
-    if max_idx >= len(template_seq):
-      raise ValueError(
-        f"Residue index {max_idx} is out of bounds for template chain with "
-        f"{len(template_seq)} residues."
-      )
-
-    for gen_pos in residue_indices:
-      fixed[int(gen_pos)] = template_seq[int(gen_pos)]
-
-  return fixed if fixed else None
-
-
 def evaluate_sequences_with_bagel(
   sequences: Sequence[str],
   energy_cfg: Dict[str, Any],
@@ -2034,577 +1589,6 @@ def evaluate_sequences_with_bagel(
   return energies, details, folding_results
 
 
-# ---------------------------------------------------------------------------
-# Sampling / statistics / plotting
-# ---------------------------------------------------------------------------
-
-
-def _pairwise_identity(seq_a: str, seq_b: str) -> float:
-  """Return the fraction of identical residues from a global alignment.
-
-  Uses Biopython's ``PairwiseAligner`` (Needleman–Wunsch) so that
-  insertions and deletions are handled correctly — a single indel no longer
-  shifts all downstream positions and artificially tanks the score.
-
-  The identity is defined as::
-
-      identity = matched_columns / alignment_length
-
-  where *alignment_length* includes gap columns on either side.
-  """
-  from Bio.Align import PairwiseAligner
-
-  if not seq_a or not seq_b:
-    return 0.0
-
-  aligner = PairwiseAligner()
-  aligner.mode = "global"
-  # Standard NW scoring: match +1, mismatch 0, gap open/extend penalties.
-  aligner.match_score = 1.0
-  aligner.mismatch_score = 0.0
-  aligner.open_gap_score = -0.5
-  aligner.extend_gap_score = -0.1
-
-  # We only need the top alignment.
-  alignment = aligner.align(seq_a, seq_b)[0]
-  aln_a, aln_b = alignment[0], alignment[1]
-  aln_len = len(aln_a)
-  if aln_len == 0:
-    return 0.0
-  matches = sum(a == b and a != "-" for a, b in zip(aln_a, aln_b))
-  return matches / max(len(seq_a), len(seq_b))
-
-
-def compute_avg_sequence_similarity(
-  generated_seqs: Sequence[str],
-  initial_seqs: Sequence[str],
-) -> float:
-  """
-  Compute the average sequence similarity between generated sequences and
-  the initial input sequences.
-
-  For each generated sequence the similarity to each initial sequence is
-  computed via global pairwise alignment (Needleman–Wunsch) so that
-  insertions and deletions are properly accounted for.  The best (maximum)
-  similarity across all initial sequences is kept for each generated
-  sequence, and the mean of those best-match values is returned.
-  """
-  if not generated_seqs or not initial_seqs:
-    return 0.0
-
-  best_sims: List[float] = []
-  for gen_seq in generated_seqs:
-    best = 0.0
-    for init_seq in initial_seqs:
-      best = max(best, _pairwise_identity(gen_seq, init_seq))
-    best_sims.append(best)
-
-  return float(np.mean(best_sims))
-
-
-def extract_reward_term(
-  details: Sequence[Dict[str, Any]],
-  term_name: str,
-) -> List[float]:
-  """Extract per-sequence values for a named energy term from evaluation details.
-
-  Returns a list parallel to ``details``. If a sequence has no valid value
-  for the term (e.g. folding failure), ``float('inf')`` is returned.
-  """
-  values: List[float] = []
-  for d in details:
-    if d and isinstance(d, dict) and "energy_terms" in d:
-      val = d["energy_terms"].get(term_name, float("inf"))
-      values.append(float(val))
-    else:
-      values.append(float("inf"))
-  return values
-
-
-def softmax_from_energies(
-  energies: Sequence[float],
-  temperature: float = 1.0,
-) -> np.ndarray:
-  """
-  Convert energies into sampling probabilities via a softmax over -energy / T.
-  Lower energies correspond to higher probabilities.
-  """
-  if temperature <= 0:
-    raise ValueError("softmax_temperature must be > 0.")
-  arr = np.asarray(energies, dtype=float)
-  if arr.size == 0:
-    raise ValueError("Cannot compute softmax for empty energy list.")
-
-  # Mask out inf energies (e.g. from template mismatch with enforce_template=False).
-  # These get zero probability; finite energies are softmaxed normally.
-  finite_mask = np.isfinite(arr)
-  if not np.any(finite_mask):
-    # All inf — fall back to uniform (caller should ideally retry).
-    return np.ones(arr.size) / arr.size
-
-  logits = np.full_like(arr, -np.inf)
-  logits[finite_mask] = -arr[finite_mask] / float(temperature)
-  logits -= np.max(logits)  # numerical stability
-  exp = np.exp(logits)
-  probs = exp / np.sum(exp)
-  return probs
-
-
-def sample_subset_indices(
-  num_items: int,
-  probs: np.ndarray,
-  f_inject: float,
-  rng: np.random.Generator,
-  replace: bool = True,
-  energies: Sequence[float] | None = None,
-  subset_size: int | None = None,
-) -> np.ndarray:
-  """
-  Sample a subset of indices of size floor(f_inject * num_items) according
-  to probabilities ``probs``.
-
-  Parameters
-  ----------
-  replace : bool
-      If True (default), sample with replacement (a sequence may appear
-      multiple times).  If False, sample without replacement; when the
-      requested subset size exceeds the number of candidates with
-      non-zero probability, fall back to returning only the index of
-      the best (lowest-energy) candidate.
-  energies : sequence of float, optional
-      Required when ``replace=False`` so that the best candidate can be
-      identified as a fallback.
-  subset_size : int, optional
-      If provided, overrides the ``floor(f_inject * num_items)`` calculation
-      for the number of items to sample.  Used when the pool contains
-      sequences from previous cycles (n_memory > 0) but the injection
-      count should still be based on the current generation size.
-  """
-  if num_items <= 0:
-    raise ValueError("num_items must be > 0.")
-  k = subset_size if subset_size is not None else int(math.floor(f_inject * num_items))
-  if k <= 0:
-    k = 1
-
-  if replace:
-    idx = rng.choice(num_items, size=k, replace=True, p=probs)
-    return np.asarray(idx, dtype=int)
-
-  # Without replacement: the pool of drawable items is limited to those
-  # with non-zero probability.
-  num_nonzero = int(np.sum(probs > 0))
-  if k <= num_nonzero:
-    idx = rng.choice(num_items, size=k, replace=False, p=probs)
-    return np.asarray(idx, dtype=int)
-
-  # Cannot draw k unique items — fall back to the single best candidate.
-  if energies is None:
-    raise ValueError(
-      "energies must be provided when sample_with_reinsertion=False "
-      "so the best candidate can be identified as a fallback."
-    )
-  best_idx = int(np.argmin(energies))
-  print(
-    f"  Cannot sample {k} unique candidates (only {num_nonzero} have "
-    f"non-zero probability); falling back to best candidate (index {best_idx})."
-  )
-  return np.asarray([best_idx], dtype=int)
-
-
-def update_cycle_log(
-  log_path: Path,
-  cycle_index: int,
-  selected_indices: np.ndarray,
-  energies: Sequence[float],
-  sequence_details: Sequence[Dict[str, Any]],
-  avg_similarity: float | None = None,
-  avg_similarity_to_prompt: float | None = None,
-  global_ids: Sequence[int] | None = None,
-  pool_ids: Sequence[int] | None = None,
-  pool_energies: Sequence[float] | None = None,
-  pool_names: Sequence[str] | None = None,
-  pool_seqs: Sequence[str] | None = None,
-  swap_accepted: bool | None = None,
-  swap_reason: str | None = None,
-  elite_energy: float | None = None,
-  elite_cycle: int | None = None,
-  annealing_temp: float | None = None,
-  thompson_state: Dict[str, Any] | None = None,
-  thompson_selected_arm_id: int | None = None,
-  thompson_progeny_reward: float | None = None,
-  proposal_method: str | None = None,
-) -> None:
-  """
-  Append / update a JSON log keyed by cycle index.
-
-  Parameters
-  ----------
-  global_ids : list of int, optional
-      Global unique IDs for the current cycle's generated sequences.
-      When provided, each entry in ``sequence_details`` and
-      ``best_sequence`` gains an ``"id"`` field.
-  pool_ids : list of int, optional
-      Global IDs for the full selection pool (memory + current cycle).
-      When provided, ``selected_indices`` index into this pool and the
-      logged ``selected_ids`` use these global IDs.
-  pool_energies : list of float, optional
-      Energies for the full selection pool (parallel to ``pool_ids``).
-  pool_names : list of str, optional
-      Names for the full selection pool (parallel to ``pool_ids``).
-  pool_seqs : list of str, optional
-      Sequences for the full selection pool (parallel to ``pool_ids``).
-  """
-  if log_path.is_file():
-    with log_path.open("r") as f:
-      log_data = json.load(f)
-  else:
-    log_data = {}
-
-  # Replace inf/nan with large sentinel for JSON compatibility.
-  def _json_safe(v: float) -> float:
-    return 1e30 if (math.isinf(v) or math.isnan(v)) else v
-
-  # When a pool is active, selected_indices index into pool_energies.
-  # Otherwise they index into this cycle's energies.
-  if pool_energies is not None:
-    sel_energies = [_json_safe(float(pool_energies[int(i)])) for i in selected_indices]
-  else:
-    sel_energies = [_json_safe(float(energies[int(i)])) for i in selected_indices]
-  avg_energy = _json_safe(float(np.mean(sel_energies)))
-  min_energy = _json_safe(float(np.min(sel_energies)))
-
-  # Build selected_sequences entries.  When a pool is active, some
-  # selected indices may point to sequences from past cycles for which
-  # we don't have full details.  In that case, build a minimal entry.
-  selected_sequences: List[Dict[str, Any]] = []
-  if pool_ids is not None:
-    # Pool is active — selected_indices are pool-relative.
-    pool_offset = len(pool_ids) - len(energies)  # where current cycle starts
-    for i in selected_indices:
-      idx = int(i)
-      gid = pool_ids[idx]
-      if idx >= pool_offset:
-        # Current cycle sequence — full details available.
-        local_idx = idx - pool_offset
-        entry = dict(sequence_details[local_idx])
-        entry["energy"] = _json_safe(float(entry.get("energy", 0.0)))
-        if "energy_terms" in entry:
-          entry["energy_terms"] = {
-            k: _json_safe(float(v)) for k, v in entry["energy_terms"].items()
-          }
-      else:
-        # From memory — full details not available, but we have the
-        # energy, name, and sequence from the pool.
-        entry: Dict[str, Any] = {"energy": _json_safe(float(pool_energies[idx]))}  # type: ignore[index]
-        if pool_seqs is not None:
-          entry["sequence"] = pool_seqs[idx]
-      entry["id"] = gid
-      selected_sequences.append(entry)
-  else:
-    for i in selected_indices:
-      entry = dict(sequence_details[int(i)])
-      entry["energy"] = _json_safe(float(entry.get("energy", 0.0)))
-      if "energy_terms" in entry:
-        entry["energy_terms"] = {
-          k: _json_safe(float(v)) for k, v in entry["energy_terms"].items()
-        }
-      if global_ids is not None:
-        entry["id"] = global_ids[int(i)]
-      selected_sequences.append(entry)
-
-  # Stats over ALL generated sequences in the current cycle (not the pool).
-  all_energies_safe = [_json_safe(float(e)) for e in energies]
-  all_avg_energy = _json_safe(float(np.mean(all_energies_safe)))
-  all_min_energy = _json_safe(float(np.min(all_energies_safe)))
-
-  # Best sequence: the one with the lowest energy among all generated this cycle.
-  best_idx = int(np.argmin(all_energies_safe))
-  best_entry = dict(sequence_details[best_idx])
-  best_entry["energy"] = _json_safe(float(best_entry.get("energy", 0.0)))
-  if "energy_terms" in best_entry:
-    best_entry["energy_terms"] = {
-      k: _json_safe(float(v)) for k, v in best_entry["energy_terms"].items()
-    }
-  if global_ids is not None:
-    best_entry["id"] = global_ids[best_idx]
-
-  # Build selected_ids: global IDs of the selected sequences.
-  if pool_ids is not None:
-    selected_id_list = [pool_ids[int(i)] for i in selected_indices]
-  elif global_ids is not None:
-    selected_id_list = [global_ids[int(i)] for i in selected_indices]
-  else:
-    selected_id_list = [int(i) for i in selected_indices]
-
-  cycle_entry: Dict[str, Any] = {
-    "cycle": cycle_index,
-    "num_generated": len(energies),
-    "all_avg_energy": all_avg_energy,
-    "all_min_energy": all_min_energy,
-    "best_sequence": best_entry,
-    "num_selected": len(selected_indices),
-    "selected_avg_energy": avg_energy,
-    "selected_min_energy": min_energy,
-    "selected_ids": selected_id_list,
-    "selected_sequences": selected_sequences,
-  }
-  if pool_ids is not None:
-    cycle_entry["pool_size"] = len(pool_ids)
-  if avg_similarity is not None:
-    cycle_entry["all_avg_similarity"] = avg_similarity
-  if avg_similarity_to_prompt is not None:
-    cycle_entry["all_avg_similarity_to_prompt"] = avg_similarity_to_prompt
-  if swap_accepted is not None:
-    cycle_entry["swap_accepted"] = swap_accepted
-  if swap_reason is not None:
-    cycle_entry["swap_reason"] = swap_reason
-  if elite_energy is not None:
-    cycle_entry["global_elite"] = {
-      "energy": _json_safe(elite_energy),
-      "from_cycle": elite_cycle,
-    }
-  if annealing_temp is not None:
-    cycle_entry["annealing_temp"] = annealing_temp
-  if proposal_method is not None:
-    cycle_entry["proposal_method"] = proposal_method
-  if thompson_selected_arm_id is not None:
-    cycle_entry["thompson_selected_arm_id"] = thompson_selected_arm_id
-  if thompson_progeny_reward is not None:
-    cycle_entry["thompson_progeny_reward"] = thompson_progeny_reward
-  if thompson_state is not None:
-    cycle_entry["thompson_num_arms"] = thompson_state.get("num_arms", 0)
-
-  log_data[str(cycle_index)] = cycle_entry
-
-  with log_path.open("w") as f:
-    json.dump(log_data, f, indent=2)
-
-
-def save_selected_structures(
-  cycle_index: int,
-  selected_indices: np.ndarray,
-  folding_results: Sequence[Any],
-  output_dir: Path,
-  pool_offset: int = 0,
-) -> None:
-  """
-  Save CIF structures for the selected subset into `sequences_cycle_<cycle>`.
-
-  If no structures were calculated during this cycle (i.e. the folding
-  oracle was not invoked because no energy term required it), this
-  function is a no-op.
-
-  Parameters
-  ----------
-  pool_offset : int
-      When n_memory > 0, ``selected_indices`` index into the combined pool
-      (memory + current cycle).  ``pool_offset`` is the index at which the
-      current cycle's sequences start in the pool.  Only current-cycle
-      sequences have folding results available; memory sequences are skipped.
-  """
-  if not any(fr is not None for fr in folding_results):
-    return
-
-  seq_dir = output_dir / f"sequences_cycle_{cycle_index}"
-  seq_dir.mkdir(parents=True, exist_ok=True)
-
-  for out_idx, seq_idx in enumerate(selected_indices):
-    idx = int(seq_idx)
-    if idx < pool_offset:
-      # Memory sequence — no folding result available for this cycle.
-      continue
-    fr = folding_results[idx - pool_offset]
-    if fr is not None:
-      cif_path = seq_dir / f"sequence_{out_idx:04d}.cif"
-      fr.to_cif(cif_path)
-      if hasattr(fr, "save_attributes"):
-        fr.save_attributes(seq_dir / f"sequence_{out_idx:04d}")
-
-
-def append_cycle_csv(
-  csv_path: Path,
-  cycle_index: int,
-  names: Sequence[str],
-  sequences: Sequence[str],
-  energies: Sequence[float],
-  details: Sequence[Dict[str, Any]],
-  folding_results: Sequence[Any],
-  initial_seqs: Sequence[str],
-  prompt_seqs: Sequence[str] | None = None,
-  proposal_method: str | None = None,
-) -> None:
-  """Append one row per generated sequence to the all_sequences.csv file."""
-  import csv
-
-  write_header = not csv_path.is_file()
-
-  # Collect all energy term keys from the first non-error detail entry.
-  energy_term_keys: List[str] = []
-  for d in details:
-    if isinstance(d, dict) and "energy_terms" in d:
-      energy_term_keys = sorted(d["energy_terms"].keys())
-      break
-
-  fieldnames = [
-    "cycle", "proposal_method", "name", "sequence", "length", "total_energy",
-  ] + energy_term_keys + [
-    "ptm", "mean_plddt", "iptm", "similarity_to_initial", "similarity_to_prompt",
-  ]
-
-  with csv_path.open("a", newline="") as f:
-    writer = csv.DictWriter(f, fieldnames=fieldnames)
-    if write_header:
-      writer.writeheader()
-
-    for idx in range(len(sequences)):
-      seq = sequences[idx]
-      # Extract per-term energies.
-      term_values: Dict[str, float] = {}
-      if idx < len(details) and isinstance(details[idx], dict):
-        term_values = details[idx].get("energy_terms", {})
-
-      # Extract structural metrics from folding result.
-      ptm_val = ""
-      plddt_val = ""
-      iptm_val = ""
-      fr = folding_results[idx] if idx < len(folding_results) else None
-      if fr is not None:
-        try:
-          ptm_val = float(fr.ptm[0])
-        except Exception:
-          pass
-        try:
-          plddt_val = float(fr.local_plddt[0].mean())
-        except Exception:
-          pass
-        try:
-          iptm_val = float(fr.chain_pair_iptm[0, 1])
-        except Exception:
-          pass
-
-      # Similarity to initial (original prompt).
-      sim = max(_pairwise_identity(seq, init_s) for init_s in initial_seqs) if initial_seqs else ""
-      # Similarity to current prompt.
-      sim_prompt = max(_pairwise_identity(seq, ps) for ps in prompt_seqs) if prompt_seqs else ""
-
-      row: Dict[str, Any] = {
-        "cycle": cycle_index,
-        "proposal_method": proposal_method or "",
-        "name": names[idx] if idx < len(names) else "",
-        "sequence": seq,
-        "length": len(seq),
-        "total_energy": energies[idx] if idx < len(energies) else "",
-      }
-      for k in energy_term_keys:
-        row[k] = term_values.get(k, "")
-      row["ptm"] = ptm_val
-      row["mean_plddt"] = plddt_val
-      row["iptm"] = iptm_val
-      row["similarity_to_initial"] = sim
-      row["similarity_to_prompt"] = sim_prompt
-
-      writer.writerow(row)
-
-
-def make_energy_summary_plot(
-  log_path: Path,
-  output_dir: Path,
-) -> None:
-  """
-  Produce a PNG plot of average and minimum energy as a function of cycle index.
-  """
-  try:
-    import matplotlib.pyplot as plt  # type: ignore
-    plt.style.use("dark_background")
-  except ImportError:
-    # Plotting is optional; skip gracefully if matplotlib is not available.
-    print("matplotlib not available, skipping summary plot.")
-    return
-
-  if not log_path.is_file():
-    print(f"No cycle log found at {log_path}, skipping summary plot.")
-    return
-
-  with log_path.open("r") as f:
-    log_data = json.load(f)
-
-  if not log_data:
-    print("Cycle log is empty, nothing to plot.")
-    return
-
-  cycles = sorted(int(k) for k in log_data.keys())
-  avg = [log_data[str(c)].get("all_avg_energy", log_data[str(c)].get("avg_energy")) for c in cycles]
-  min_e = [log_data[str(c)].get("all_min_energy", log_data[str(c)].get("min_energy")) for c in cycles]
-
-  # Compute cumulative minimum (global best seen so far).
-  cum_min = []
-  running_min = float("inf")
-  for e in min_e:
-    if e is not None and e < running_min:
-      running_min = e
-    cum_min.append(running_min if running_min != float("inf") else e)
-
-  fig, ax = plt.subplots(figsize=(7, 4))
-  ax.plot(cycles, avg, marker="o", color="#00bfff", label="Average energy (all generated)")
-  ax.plot(cycles, min_e, marker="s", color="#00e676", label="Minimum energy (all generated)")
-  ax.plot(cycles, cum_min, linestyle="--", color="#ff6b6b", linewidth=1.5, label="Global best (cumulative min)")
-
-  # Mark rejected swaps with X markers if data available.
-  rejected_cycles = []
-  rejected_energies = []
-  for c in cycles:
-    entry = log_data[str(c)]
-    if entry.get("swap_accepted") is False:
-      rejected_cycles.append(c)
-      rejected_energies.append(entry.get("all_min_energy", entry.get("min_energy")))
-  if rejected_cycles:
-    ax.scatter(rejected_cycles, rejected_energies, marker="x", color="#ff6b6b",
-               s=100, zorder=5, label="Swap rejected")
-
-  ax.set_xlabel("Cycle")
-  ax.set_ylabel("Energy")
-  ax.set_title("Energy & similarity trajectory over cycles")
-  ax.grid(True, linestyle="--", alpha=0.4)
-
-  # Plot sequence similarity on a twin y-axis if available.
-  sim_original = [log_data[str(c)].get("all_avg_similarity") for c in cycles]
-  sim_prompt = [log_data[str(c)].get("all_avg_similarity_to_prompt") for c in cycles]
-  has_sim_original = any(s is not None for s in sim_original)
-  has_sim_prompt = any(s is not None for s in sim_prompt)
-  if has_sim_original or has_sim_prompt:
-    ax2 = ax.twinx()
-    if has_sim_original:
-      ax2.plot(
-        cycles,
-        [s if s is not None else float("nan") for s in sim_original],
-        marker="^",
-        linestyle="--",
-        color="#ffab40",
-        label="Similarity to original",
-      )
-    if has_sim_prompt:
-      ax2.plot(
-        cycles,
-        [s if s is not None else float("nan") for s in sim_prompt],
-        marker="v",
-        linestyle="--",
-        color="#e040fb",
-        label="Similarity to prompt",
-      )
-    ax2.set_ylabel("Sequence similarity")
-    ax2.set_ylim(0, 1.05)
-    lines1, labels1 = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(lines1 + lines2, labels1 + labels2, fontsize="small")
-  else:
-    ax.legend()
-
-  output_dir.mkdir(parents=True, exist_ok=True)
-  out_path = output_dir / "energy_summary.png"
-  fig.tight_layout()
-  fig.savefig(out_path, dpi=150, facecolor="black", edgecolor="none")
-  plt.close(fig)
-
 
 # ---------------------------------------------------------------------------
 # Main pipeline loop
@@ -2698,19 +1682,6 @@ def run_pipeline(
     )
   base_initial_names = list(init_names)
   base_initial_seqs = list(init_seqs)
-
-  # Extract fixed residue positions from the energy config when enforce_template
-  # is enabled. These positions will be forced during ProFam generation.
-  fixed_residues: Dict[int, str] | None = None
-  if cfg.enforce_template:
-    fixed_residues = extract_fixed_residues_from_energy_config(energy_cfg)
-    if fixed_residues:
-      print(
-        f"enforce_template=True: forcing {len(fixed_residues)} residue positions "
-        f"during generation."
-      )
-    else:
-      print("enforce_template=True but no TemplateMatchEnergy found; no positions forced.")
 
   injected_names: List[str] = []
   injected_seqs: List[str] = []
@@ -3000,7 +1971,6 @@ def run_pipeline(
           cycle_dir=cycle_dir,
           model=profam_model,
           device=profam_device,
-          fixed_positions=fixed_residues,
         )
       if len(gen_seqs) != cfg.profam_num_samples:
         print(
@@ -3226,8 +2196,6 @@ def run_pipeline(
       else:
         prop_reward = 0.0
       proposal_bandit.update(cycle_proposal_method, prop_reward)
-      if cfg.thompson_discount < 1.0:
-        proposal_bandit.decay(cfg.thompson_discount)
       print(f"  Proposal bandit UPDATE: method={cycle_proposal_method}, "
             f"reward={prop_reward:.4f}")
 
@@ -3399,15 +2367,6 @@ def run_pipeline(
         output_dir=cfg.output_dir,
         pool_offset=pool_offset,
       )
-
-      # Apply discount decay to all posteriors (sequence arms + temperature + proposal).
-      if cfg.thompson_discount < 1.0:
-        thompson_sampler.decay_posteriors(cfg.thompson_discount)
-        if temp_bandit is not None:
-          temp_bandit.decay(cfg.thompson_discount)
-        if proposal_bandit is not None:
-          proposal_bandit.decay(cfg.thompson_discount)
-        print(f"  Thompson discount: decayed posteriors by {cfg.thompson_discount}")
 
       # Restore original temperature on cfg so it doesn't leak.
       if temp_bandit is not None and cycle_temperature is not None:

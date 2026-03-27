@@ -68,7 +68,6 @@ thompson_m_samples: 1
 thompson_reward_term: ipSAE
 thompson_exploit_bias: 5.0
 thompson_temperature_bins: null
-thompson_discount: 1.0
 thompson_proposal_bandit: true
 
 # NEW: Diverse arm pruning
