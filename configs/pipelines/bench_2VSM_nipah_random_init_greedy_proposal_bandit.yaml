@@ -1,0 +1,39 @@
+## Benchmark: 2VSM_nipah / random_init / greedy_proposal_bandit
+##
+## Target: 2VSM_nipah, Init: random_init, Condition: greedy_proposal_bandit
+## proposal_method: profam, freeze_prompt: False
+
+profam_checkpoint_dir: .profam_repo/model_checkpoints/profam-1
+profam_sampler: single
+profam_num_samples: 1
+profam_max_tokens: 8192
+profam_max_generated_length: null
+profam_temperature: 0.8
+profam_top_p: 0.95
+f_inject: 0.25
+max_cycles: 100
+softmax_temperature: 0.01
+run_on_modal: false
+output_frequency: 1
+enforce_template: false
+sample_with_reinsertion: false
+reinject_initial: true
+n_memory: 0
+elitism: true
+accept_only_improvement: true
+max_mutations: 5
+thompson_reward_term: ipSAE
+deduplicate_sequences: true
+energy_config: configs/energy/energy_boltz_ipsae_2VSM_nipah.yaml
+output_dir: outputs/bench/2VSM_nipah/random_init/greedy_proposal_bandit
+random_seed: 793384
+random_init: true
+random_init_max_residues: 80
+selection_strategy: greedy
+thompson_m_samples: 1
+thompson_exploit_bias: 5.0
+thompson_temperature_bins: null
+thompson_discount: 1.0
+thompson_proposal_bandit: true
+proposal_method: profam
+freeze_prompt: false

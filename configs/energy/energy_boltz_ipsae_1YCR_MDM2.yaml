@@ -1,0 +1,18 @@
+## Energy configuration: Boltz + ipSAE scoring (multi-chain binding)
+##
+## Folds the generated sequence together with the MDM2 target (1YCR)
+## using Boltz and scores the interface with ipSAE.
+
+folding_oracle:
+  type: Boltz
+  kwargs: {}
+
+energies:
+  - type: ipSAEEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 10.0
+      target: MCNTNMSVPTDGAVTTSQIPASEQETLVRPKPLLLKLLKSVGAQKDTYTMKEVLFYLGQYIMTKRLYDEKQQHIVYCSNDLLGDLFGVPSFSVKEHRKIYTMIYRNLVV
+      residues:
+        GEN: "all"
+        B: "all"

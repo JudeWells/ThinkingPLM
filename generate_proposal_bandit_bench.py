@@ -1,72 +1,125 @@
 #!/usr/bin/env python3
-"""Generate benchmark configs and SLURM scripts for proposal bandit experiments."""
+"""Generate benchmark configs and SLURM scripts for proposal bandit experiments.
+
+Generates configs for all (target × scaffold × condition) combinations,
+including a random_init scaffold that uses no initial FASTA.
+"""
 
 import os
 import random
 
-# Define targets with their energy configs
 TARGETS = {
     "2GDZ_15PGDH": "example_energy_boltz_ipsae_2GDZ_15PGDH.yaml",
     "2VSM_nipah": "energy_boltz_ipsae_2VSM_nipah.yaml",
     "4OYD_epstein_barr": "energy_boltz_ipsae_4OYD_epstein_barr.yaml",
     "4ZQK_PD-L1": "energy_boltz_ipsae_4ZQK_PD-L1.yaml",
+    "1TNF_TNF_alpha": "energy_boltz_ipsae_1TNF_TNF_alpha.yaml",
+    "1YCR_MDM2": "energy_boltz_ipsae_1YCR_MDM2.yaml",
 }
 
-# Define initial sequences (scaffolds) with their fasta files
 SCAFFOLDS = {
     "3helix": "initial_3helix_scaffold_pdb_1LQZ",
     "4D5": "initial_sequence_human_single_domain_antibody_4D5.fasta",
     "ankyrin": "initial_sequence_ankyrin_repeat.fasta",
     "nanobody": "initial_sequence_nanobody_like.fasta",
+    "random_init": None,
 }
 
-CONFIG_TEMPLATE = """## Benchmark: {target} / {scaffold} / proposal_bandit
-##
-## Target: {target}, Init: {scaffold}, Condition: proposal_bandit
-## Thompson sampling with proposal bandit: learns to choose between profam and random_mutation
+# Condition definitions with Thompson sampling / proposal bandit params.
+# Each condition maps to the fields that differ from the SHARED base.
+CONDITIONS = {
+    "proposal_bandit": {
+        "selection_strategy": "thompson",
+        "thompson_m_samples": 5,
+        "thompson_exploit_bias": 2.0,
+        "thompson_temperature_bins": [0.6, 0.8, 1.0],
+        "thompson_discount": 0.95,
+        "thompson_proposal_bandit": True,
+        "proposal_method": "profam",
+        "freeze_prompt": False,
+    },
+    "proposal_bandit_eb5": {
+        "selection_strategy": "thompson",
+        "thompson_m_samples": 5,
+        "thompson_exploit_bias": 5.0,
+        "thompson_temperature_bins": [0.6, 0.8, 1.0],
+        "thompson_discount": 0.95,
+        "thompson_proposal_bandit": True,
+        "proposal_method": "profam",
+        "freeze_prompt": False,
+    },
+    "proposal_bandit_eb5_d1": {
+        "selection_strategy": "thompson",
+        "thompson_m_samples": 5,
+        "thompson_exploit_bias": 5.0,
+        "thompson_temperature_bins": [0.6, 0.8, 1.0],
+        "thompson_discount": 1.0,
+        "thompson_proposal_bandit": True,
+        "proposal_method": "profam",
+        "freeze_prompt": False,
+    },
+    "proposal_bandit_eb10_d1": {
+        "selection_strategy": "thompson",
+        "thompson_m_samples": 5,
+        "thompson_exploit_bias": 10.0,
+        "thompson_temperature_bins": [0.6, 0.8, 1.0],
+        "thompson_discount": 1.0,
+        "thompson_proposal_bandit": True,
+        "proposal_method": "profam",
+        "freeze_prompt": False,
+    },
+    "greedy_proposal_bandit": {
+        "selection_strategy": "greedy",
+        "thompson_m_samples": 1,
+        "thompson_exploit_bias": 5.0,
+        "thompson_temperature_bins": None,
+        "thompson_discount": 1.0,
+        "thompson_proposal_bandit": True,
+        "proposal_method": "profam",
+        "freeze_prompt": False,
+    },
+    "profam_update": {
+        "proposal_method": "profam",
+        "freeze_prompt": False,
+    },
+    "profam_frozen": {
+        "proposal_method": "profam",
+        "freeze_prompt": True,
+    },
+    "random_update": {
+        "proposal_method": "random_mutation",
+        "freeze_prompt": False,
+    },
+}
 
-profam_checkpoint_dir: .profam_repo/model_checkpoints/profam-1
-profam_sampler: single
-profam_num_samples: 1
-profam_max_tokens: 8192
-profam_max_generated_length: null
-profam_temperature: 0.8
-profam_top_p: 0.95
+SHARED = {
+    "profam_checkpoint_dir": ".profam_repo/model_checkpoints/profam-1",
+    "profam_sampler": "single",
+    "profam_num_samples": 1,
+    "profam_max_tokens": 8192,
+    "profam_max_generated_length": None,
+    "profam_temperature": 0.8,
+    "profam_top_p": 0.95,
+    "f_inject": 0.25,
+    "max_cycles": 100,
+    "softmax_temperature": 0.01,
+    "run_on_modal": False,
+    "output_frequency": 1,
+    "enforce_template": False,
+    "sample_with_reinsertion": False,
+    "reinject_initial": True,
+    "n_memory": 0,
+    "elitism": True,
+    "accept_only_improvement": True,
+    "max_mutations": 5,
+    "thompson_reward_term": "ipSAE",
+    "deduplicate_sequences": True,
+}
 
-f_inject: 0.25
-max_cycles: 100
-softmax_temperature: 0.01
-run_on_modal: false
-output_frequency: 1
-enforce_template: false
-sample_with_reinsertion: false
-reinject_initial: true
-n_memory: 0
-elitism: true
-accept_only_improvement: true
-max_mutations: 5
-
-initial_fasta: configs/sequences/{initial_fasta}
-energy_config: configs/energy/{energy_config}
-output_dir: outputs/bench/{target}/{scaffold}/proposal_bandit_eb10_d1
-random_seed: {random_seed}
-
-proposal_method: profam
-freeze_prompt: false
-
-# Thompson sampling settings
-selection_strategy: thompson
-thompson_m_samples: 5
-thompson_reward_term: ipSAE
-thompson_exploit_bias: 10.0
-thompson_temperature_bins: [0.6, 0.8, 1.0]
-thompson_discount: 1.0
-thompson_proposal_bandit: true
-deduplicate_sequences: true
-"""
+RANDOM_INIT_MAX_RESIDUES = 80
 
 SLURM_TEMPLATE = """#!/bin/bash
-#SBATCH --job-name=bench_{target}_{scaffold}_bandit_eb10_d1
+#SBATCH --job-name=bench_{job_tag}
 #SBATCH --output=/projects/u6bz/jude/ThinkingPLM/logs/%x_%j.out
 #SBATCH --error=/projects/u6bz/jude/ThinkingPLM/logs/%x_%j.err
 #SBATCH --nodes=1
@@ -77,84 +130,119 @@ SLURM_TEMPLATE = """#!/bin/bash
 
 WORKDIR=/projects/u6bz/jude/ThinkingPLM
 
-# Create logs directory if it doesn't exist
 mkdir -p "$WORKDIR/logs"
 
-# Initialize conda and activate environment
 source ~/.bashrc
 conda activate profam_bagel
 
-# Run the pipeline
 cd "$WORKDIR"
 python "$WORKDIR/run_profam_bagel_pipeline.py" --config "$WORKDIR/configs/pipelines/{config_name}"
 
 echo "Job completed at $(date)"
 """
 
+
+def _yaml_val(v):
+    """Format a Python value for YAML output."""
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, list):
+        return "[" + ", ".join(str(x) for x in v) + "]"
+    return str(v)
+
+
+def _write_config(path, header_lines, fields):
+    """Write a YAML config file with a comment header."""
+    with open(path, "w") as f:
+        for line in header_lines:
+            f.write(line + "\n")
+        f.write("\n")
+        for key, val in fields.items():
+            f.write(f"{key}: {_yaml_val(val)}\n")
+
+
 def main():
+    random.seed(42)
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_dir = os.path.join(script_dir, "configs/pipelines")
     slurm_dir = os.path.join(script_dir, "slurm_scripts")
-
+    os.makedirs(config_dir, exist_ok=True)
     os.makedirs(slurm_dir, exist_ok=True)
 
     all_slurm_scripts = []
+    generated_configs = []
 
     for target, energy_config in TARGETS.items():
         for scaffold, initial_fasta in SCAFFOLDS.items():
-            # Generate unique random seed
-            random_seed = random.randint(100000, 999999)
+            for cond_name, cond_params in CONDITIONS.items():
+                random_seed = random.randint(100000, 999999)
 
-            # Config filename
-            config_name = f"bench_{target}_{scaffold}_proposal_bandit_eb10_d1.yaml"
-            config_path = os.path.join(config_dir, config_name)
+                config_name = f"bench_{target}_{scaffold}_{cond_name}.yaml"
+                config_path = os.path.join(config_dir, config_name)
 
-            # Generate config content
-            config_content = CONFIG_TEMPLATE.format(
-                target=target,
-                scaffold=scaffold,
-                initial_fasta=initial_fasta,
-                energy_config=energy_config,
-                random_seed=random_seed,
-            )
+                fields = dict(SHARED)
+                fields["energy_config"] = f"configs/energy/{energy_config}"
+                fields["output_dir"] = f"outputs/bench/{target}/{scaffold}/{cond_name}"
+                fields["random_seed"] = random_seed
 
-            # Write config file
-            with open(config_path, "w") as f:
-                f.write(config_content)
-            print(f"Created config: {config_name}")
+                if initial_fasta is None:
+                    fields["random_init"] = True
+                    fields["random_init_max_residues"] = RANDOM_INIT_MAX_RESIDUES
+                else:
+                    fields["initial_fasta"] = f"configs/sequences/{initial_fasta}"
 
-            # SLURM script filename
-            slurm_name = f"run_bench_{target}_{scaffold}_proposal_bandit_eb10_d1.sh"
-            slurm_path = os.path.join(slurm_dir, slurm_name)
+                fields.update(cond_params)
 
-            # Generate SLURM content
-            slurm_content = SLURM_TEMPLATE.format(
-                target=target,
-                scaffold=scaffold,
-                config_name=config_name,
-            )
+                is_thompson = cond_params.get("selection_strategy") == "thompson"
+                header_lines = [
+                    f"## Benchmark: {target} / {scaffold} / {cond_name}",
+                    f"##",
+                    f"## Target: {target}, Init: {scaffold}, Condition: {cond_name}",
+                ]
+                if is_thompson:
+                    header_lines.append(
+                        "## Thompson sampling with proposal bandit: learns to choose between profam and random_mutation"
+                    )
+                else:
+                    pm = cond_params.get("proposal_method", "profam")
+                    fp = cond_params.get("freeze_prompt", False)
+                    header_lines.append(f"## proposal_method: {pm}, freeze_prompt: {fp}")
 
-            # Write SLURM script
-            with open(slurm_path, "w") as f:
-                f.write(slurm_content)
-            os.chmod(slurm_path, 0o755)
-            print(f"Created SLURM script: {slurm_name}")
+                _write_config(config_path, header_lines, fields)
+                generated_configs.append(config_name)
 
-            all_slurm_scripts.append(slurm_name)
+                job_tag = f"{target}_{scaffold}_{cond_name}"
+                slurm_name = f"run_bench_{job_tag}.sh"
+                slurm_path = os.path.join(slurm_dir, slurm_name)
 
-    # Create a master submission script
-    submit_all_path = os.path.join(slurm_dir, "submit_all_proposal_bandit_eb10_d1.sh")
+                slurm_content = SLURM_TEMPLATE.format(
+                    job_tag=job_tag,
+                    config_name=config_name,
+                )
+                with open(slurm_path, "w") as f:
+                    f.write(slurm_content)
+                os.chmod(slurm_path, 0o755)
+
+                all_slurm_scripts.append(slurm_name)
+
+    submit_all_path = os.path.join(slurm_dir, "submit_all_bench.sh")
     with open(submit_all_path, "w") as f:
         f.write("#!/bin/bash\n")
-        f.write("# Submit all proposal bandit benchmark jobs\n\n")
-        f.write("SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n\n")
+        f.write("# Submit all benchmark jobs\n\n")
+        f.write('SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n\n')
         for script in all_slurm_scripts:
             f.write(f'sbatch "$SCRIPT_DIR/{script}"\n')
-        f.write('\necho "Submitted all proposal bandit benchmark jobs"\n')
+        f.write(f'\necho "Submitted {len(all_slurm_scripts)} benchmark jobs"\n')
     os.chmod(submit_all_path, 0o755)
 
-    print(f"\nCreated {len(all_slurm_scripts)} configs and SLURM scripts")
-    print(f"Run 'slurm_scripts/submit_all_proposal_bandit_eb10_d1.sh' to submit all jobs")
+    print(f"Generated {len(generated_configs)} benchmark configs and SLURM scripts")
+    for c in generated_configs:
+        print(f"  {c}")
+    print(f"\nRun 'slurm_scripts/submit_all_bench.sh' to submit all jobs")
+
 
 if __name__ == "__main__":
     main()

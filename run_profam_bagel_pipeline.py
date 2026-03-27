@@ -367,7 +367,7 @@ class ProposalBandit:
 
 @dataclass
 class PipelineConfig:
-  initial_fasta: Path
+  initial_fasta: Path | None
   profam_checkpoint_dir: Path
   profam_sampler: str = "single"
   profam_num_samples: int = 10
@@ -408,6 +408,9 @@ class PipelineConfig:
   thompson_proposal_bandit: bool = False   # True = Thompson bandit over proposal methods (profam vs random_mutation)
   deduplicate_sequences: bool = True       # skip folding for already-seen sequences, retry generation
 
+  random_init: bool = False                # if True, generate a random initial sequence instead of reading from FASTA
+  random_init_max_residues: int = 80       # max length of randomly generated initial sequence
+
 
 def _to_path(x: Any) -> Path:
   return x if isinstance(x, Path) else Path(str(x))
@@ -436,8 +439,9 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
       return yaml_cfg[name]
     return default
 
+  _init_fasta_raw = pick("initial_fasta", None)
   cfg = PipelineConfig(
-    initial_fasta=_to_path(pick("initial_fasta")),
+    initial_fasta=_to_path(_init_fasta_raw) if _init_fasta_raw else None,
     profam_checkpoint_dir=_to_path(pick("profam_checkpoint_dir", ".")),
     profam_sampler=str(pick("profam_sampler", "single")),
     profam_num_samples=int(pick("profam_num_samples", 10)),
@@ -497,6 +501,8 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     thompson_discount=float(pick("thompson_discount", 1.0)),
     thompson_proposal_bandit=bool(pick("thompson_proposal_bandit", False)),
     deduplicate_sequences=bool(pick("deduplicate_sequences", True)),
+    random_init=bool(pick("random_init", False)),
+    random_init_max_residues=int(pick("random_init_max_residues", 80)),
   )
 
   if cfg.proposal_method not in ("profam", "random_mutation"):
@@ -514,8 +520,14 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     raise ValueError(f"f_inject must be in (0, 1], got {cfg.f_inject}")
   if cfg.profam_num_samples <= 0:
     raise ValueError("profam_num_samples (N_output) must be > 0.")
-  if not cfg.initial_fasta.is_file():
-    raise FileNotFoundError(f"Initial FASTA not found: {cfg.initial_fasta}")
+  if cfg.random_init:
+    if cfg.random_init_max_residues < 1:
+      raise ValueError(f"random_init_max_residues must be >= 1, got {cfg.random_init_max_residues}")
+  elif cfg.initial_fasta is None or not cfg.initial_fasta.is_file():
+    raise FileNotFoundError(
+      f"Initial FASTA not found: {cfg.initial_fasta}. "
+      f"Provide a valid initial_fasta or set random_init: true."
+    )
   if cfg.proposal_method == "profam" and not cfg.profam_checkpoint_dir.is_dir():
     raise FileNotFoundError(f"ProFam checkpoint_dir not found: {cfg.profam_checkpoint_dir}")
   if not cfg.energy_config.is_file():
@@ -803,6 +815,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
       "If true, skip structure prediction for generated sequences that are "
       "identical to previously seen sequences (reuse cached energies) and "
       "retry generation to obtain novel sequences. Default: true."
+    ),
+  )
+
+  # Random initialization.
+  p.add_argument(
+    "--random_init",
+    type=str,
+    default=None,
+    help=(
+      "If true, generate a random initial protein sequence instead of reading "
+      "from initial_fasta. Useful for benchmarking without a scaffold."
+    ),
+  )
+  p.add_argument(
+    "--random_init_max_residues",
+    type=int,
+    default=None,
+    help=(
+      "Maximum number of residues for the randomly generated initial sequence "
+      "when random_init is true (default: 80)."
     ),
   )
 
@@ -2528,13 +2560,21 @@ def run_pipeline(
   rng = np.random.default_rng(cfg.random_seed)
   cycle_log_path = cfg.output_dir / "cycle_stats.json"
 
-  # Read initial sequences S1 from FASTA
-  init_names, init_seqs = read_fasta(
-    str(cfg.initial_fasta),
-    keep_insertions=True,
-    keep_gaps=False,
-    to_upper=True,
-  )
+  # Read initial sequences S1 from FASTA, or generate randomly.
+  if cfg.random_init:
+    _AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+    rand_len = rng.integers(cfg.random_init_max_residues // 2, cfg.random_init_max_residues + 1)
+    rand_seq = "".join(rng.choice(list(_AMINO_ACIDS), size=rand_len))
+    init_names = [f"random_init_len{rand_len}"]
+    init_seqs = [rand_seq]
+    print(f"Random init: generated sequence of length {rand_len}")
+  else:
+    init_names, init_seqs = read_fasta(
+      str(cfg.initial_fasta),
+      keep_insertions=True,
+      keep_gaps=False,
+      to_upper=True,
+    )
   base_initial_names = list(init_names)
   base_initial_seqs = list(init_seqs)
 
@@ -3387,12 +3427,18 @@ def main(argv: Sequence[str] | None = None) -> None:
 
   yaml_cfg = load_yaml_config(Path(args.config)) if args.config else {}
 
-  # Determine proposal method early to know which fields are required.
+  # Determine proposal method and random_init early to know which fields are required.
   proposal_method = (
     getattr(args, "proposal_method", None)
     or yaml_cfg.get("proposal_method", "profam")
   )
-  required_fields = ["initial_fasta", "energy_config"]
+  random_init = (
+    getattr(args, "random_init", None)
+    or yaml_cfg.get("random_init", False)
+  )
+  required_fields = ["energy_config"]
+  if not random_init:
+    required_fields.append("initial_fasta")
   if proposal_method == "profam":
     required_fields.append("profam_checkpoint_dir")
   for required in required_fields:
