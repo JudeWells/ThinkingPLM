@@ -10,7 +10,6 @@ profam_max_tokens: 8192
 profam_max_generated_length: null
 profam_temperature: 0.8
 profam_top_p: 0.95
-
 f_inject: 0.25
 max_cycles: 100
 softmax_temperature: 0.01
@@ -23,21 +22,17 @@ n_memory: 0
 elitism: true
 accept_only_improvement: true
 max_mutations: 5
-
-initial_fasta: configs/sequences/initial_sequence_nanobody_like.fasta
+thompson_reward_term: ipSAE
+deduplicate_sequences: true
 energy_config: configs/energy/energy_boltz_ipsae_4ZQK_PD-L1.yaml
 output_dir: outputs/bench/4ZQK_PD-L1/nanobody/proposal_bandit
-random_seed: 387784
-
-proposal_method: profam
-freeze_prompt: false
-
-# Thompson sampling settings
+random_seed: 665158
+initial_fasta: configs/sequences/initial_sequence_nanobody_like.fasta
 selection_strategy: thompson
 thompson_m_samples: 5
-thompson_reward_term: ipSAE
 thompson_exploit_bias: 2.0
 thompson_temperature_bins: [0.6, 0.8, 1.0]
 thompson_discount: 0.95
 thompson_proposal_bandit: true
-deduplicate_sequences: true
+proposal_method: profam
+freeze_prompt: false

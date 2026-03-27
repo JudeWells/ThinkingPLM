@@ -17,9 +17,9 @@ OUT_DIR.mkdir(exist_ok=True)
 # Strategy display order and colors
 STRATEGY_ORDER = ["profam_update", "profam_frozen", "random_update", "random_frozen",
                   "proposal_bandit", "proposal_bandit_eb5", "proposal_bandit_eb5_d1",
-                  "proposal_bandit_eb10_d1"]
+                  "proposal_bandit_eb10_d1", "greedy_proposal_bandit"]
 STRATEGY_COLORS = {
-    "profam_update": "#00e676",
+    "profam_update": "#ffffff",
     "profam_frozen": "#00bfff",
     "random_update": "#ff6b6b",
     "random_frozen": "#ffab40",
@@ -27,6 +27,7 @@ STRATEGY_COLORS = {
     "proposal_bandit_eb5": "#ff80ab",
     "proposal_bandit_eb5_d1": "#ffd740",
     "proposal_bandit_eb10_d1": "#18ffff",
+    "greedy_proposal_bandit": "#76ff03",
 }
 STRATEGY_LABELS = {
     "profam_update": "ProFam Update",
@@ -37,6 +38,7 @@ STRATEGY_LABELS = {
     "proposal_bandit_eb5": "Bandit EB=5 d=0.95",
     "proposal_bandit_eb5_d1": "Bandit EB=5 d=1.0",
     "proposal_bandit_eb10_d1": "Bandit EB=10 d=1.0",
+    "greedy_proposal_bandit": "Greedy Bandit",
 }
 
 
@@ -410,6 +412,7 @@ def generate_markdown(experiments):
     lines.append("| **Bandit EB=5 d=0.95** | Thompson bandit, exploit_bias=5, discount=0.95 |")
     lines.append("| **Bandit EB=5 d=1.0** | Thompson bandit, exploit_bias=5, discount=1.0 (no decay) |")
     lines.append("| **Bandit EB=10 d=1.0** | Thompson bandit, exploit_bias=10, discount=1.0 (no decay) |")
+    lines.append("| **Greedy Bandit** | Greedy proposal bandit (exploits best-known proposals) |")
     lines.append("")
 
     # Summary table

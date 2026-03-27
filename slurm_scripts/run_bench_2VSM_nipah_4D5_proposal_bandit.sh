@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=bench_2VSM_nipah_4D5_bandit
+#SBATCH --job-name=bench_2VSM_nipah_4D5_proposal_bandit
 #SBATCH --output=/projects/u6bz/jude/ThinkingPLM/logs/%x_%j.out
 #SBATCH --error=/projects/u6bz/jude/ThinkingPLM/logs/%x_%j.err
 #SBATCH --nodes=1
@@ -10,14 +10,11 @@
 
 WORKDIR=/projects/u6bz/jude/ThinkingPLM
 
-# Create logs directory if it doesn't exist
 mkdir -p "$WORKDIR/logs"
 
-# Initialize conda and activate environment
 source ~/.bashrc
 conda activate profam_bagel
 
-# Run the pipeline
 cd "$WORKDIR"
 python "$WORKDIR/run_profam_bagel_pipeline.py" --config "$WORKDIR/configs/pipelines/bench_2VSM_nipah_4D5_proposal_bandit.yaml"
 

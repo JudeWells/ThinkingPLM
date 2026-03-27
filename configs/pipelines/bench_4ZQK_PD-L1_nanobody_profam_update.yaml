@@ -7,6 +7,7 @@ profam_checkpoint_dir: .profam_repo/model_checkpoints/profam-1
 profam_sampler: single
 profam_num_samples: 1
 profam_max_tokens: 8192
+profam_max_generated_length: null
 profam_temperature: 0.8
 profam_top_p: 0.95
 f_inject: 0.25
@@ -21,10 +22,11 @@ n_memory: 0
 elitism: true
 accept_only_improvement: true
 max_mutations: 5
-initial_fasta: configs/sequences/initial_sequence_nanobody_like.fasta
+thompson_reward_term: ipSAE
+deduplicate_sequences: true
 energy_config: configs/energy/energy_boltz_ipsae_4ZQK_PD-L1.yaml
 output_dir: outputs/bench/4ZQK_PD-L1/nanobody/profam_update
-random_seed: 717889
+random_seed: 711878
+initial_fasta: configs/sequences/initial_sequence_nanobody_like.fasta
 proposal_method: profam
 freeze_prompt: false
-profam_max_generated_length: null

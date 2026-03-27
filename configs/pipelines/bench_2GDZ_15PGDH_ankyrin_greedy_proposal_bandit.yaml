@@ -1,11 +1,8 @@
 ## Benchmark: 2GDZ_15PGDH / ankyrin / greedy_proposal_bandit
 ##
-## Greedy elitist prompt selection + Thompson proposal bandit
-## selection_strategy: greedy, thompson_proposal_bandit: true
-## Always conditions on current best (like random_update),
-## but Thompson bandit chooses between profam and random_mutation.
+## Target: 2GDZ_15PGDH, Init: ankyrin, Condition: greedy_proposal_bandit
+## proposal_method: profam, freeze_prompt: False
 
-initial_fasta: configs/sequences/initial_sequence_ankyrin_repeat.fasta
 profam_checkpoint_dir: .profam_repo/model_checkpoints/profam-1
 profam_sampler: single
 profam_num_samples: 1
@@ -13,12 +10,9 @@ profam_max_tokens: 8192
 profam_max_generated_length: null
 profam_temperature: 0.8
 profam_top_p: 0.95
-energy_config: configs/energy/example_energy_boltz_ipsae_2GDZ_15PGDH.yaml
 f_inject: 0.25
 max_cycles: 100
-output_dir: outputs/bench/2GDZ_15PGDH/ankyrin/greedy_proposal_bandit
 softmax_temperature: 0.01
-random_seed: 543143
 run_on_modal: false
 output_frequency: 1
 enforce_template: false
@@ -28,13 +22,17 @@ n_memory: 0
 elitism: true
 accept_only_improvement: true
 max_mutations: 5
-proposal_method: profam
-freeze_prompt: false
+thompson_reward_term: ipSAE
+deduplicate_sequences: true
+energy_config: configs/energy/example_energy_boltz_ipsae_2GDZ_15PGDH.yaml
+output_dir: outputs/bench/2GDZ_15PGDH/ankyrin/greedy_proposal_bandit
+random_seed: 343962
+initial_fasta: configs/sequences/initial_sequence_ankyrin_repeat.fasta
 selection_strategy: greedy
 thompson_m_samples: 1
-thompson_reward_term: ipSAE
 thompson_exploit_bias: 5.0
 thompson_temperature_bins: null
 thompson_discount: 1.0
 thompson_proposal_bandit: true
-deduplicate_sequences: true
+proposal_method: profam
+freeze_prompt: false

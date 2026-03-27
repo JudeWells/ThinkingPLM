@@ -7,6 +7,7 @@ profam_checkpoint_dir: .profam_repo/model_checkpoints/profam-1
 profam_sampler: single
 profam_num_samples: 1
 profam_max_tokens: 8192
+profam_max_generated_length: null
 profam_temperature: 0.8
 profam_top_p: 0.95
 f_inject: 0.25
@@ -21,10 +22,11 @@ n_memory: 0
 elitism: true
 accept_only_improvement: true
 max_mutations: 5
-initial_fasta: configs/sequences/initial_3helix_scaffold_pdb_1LQZ
+thompson_reward_term: ipSAE
+deduplicate_sequences: true
 energy_config: configs/energy/energy_boltz_ipsae_4OYD_epstein_barr.yaml
 output_dir: outputs/bench/4OYD_epstein_barr/3helix/profam_frozen
-random_seed: 191161
+random_seed: 575435
+initial_fasta: configs/sequences/initial_3helix_scaffold_pdb_1LQZ
 proposal_method: profam
 freeze_prompt: true
-profam_max_generated_length: null
