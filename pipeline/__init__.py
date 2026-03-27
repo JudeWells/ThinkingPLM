@@ -12,6 +12,18 @@ from pipeline.logging import (
     update_cycle_log,
 )
 from pipeline.plotting import make_energy_summary_plot
+from pipeline.proposal import (
+    ProFamProposalGenerator,
+    ProposalGenerator,
+    RandomMutationProposalGenerator,
+)
+from pipeline.selection import (
+    GreedyPromptSelector,
+    PromptSelector,
+    SelectionManager,
+    SelectionResult,
+    ThompsonPromptSelector,
+)
 from pipeline.utils import (
     compute_avg_sequence_similarity,
     compute_sequence_identity,
@@ -34,4 +46,12 @@ __all__ = [
     "append_cycle_csv",
     "save_selected_structures",
     "make_energy_summary_plot",
+    "ProposalGenerator",
+    "ProFamProposalGenerator",
+    "RandomMutationProposalGenerator",
+    "SelectionResult",
+    "PromptSelector",
+    "GreedyPromptSelector",
+    "ThompsonPromptSelector",
+    "SelectionManager",
 ]

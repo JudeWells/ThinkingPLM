@@ -88,6 +88,15 @@ from pipeline.logging import (
     update_cycle_log,
 )
 from pipeline.plotting import make_energy_summary_plot
+from pipeline.proposal import (
+    ProFamProposalGenerator,
+    RandomMutationProposalGenerator,
+)
+from pipeline.selection import (
+    GreedyPromptSelector,
+    SelectionManager,
+    ThompsonPromptSelector,
+)
 from pipeline.utils import (
     compute_avg_sequence_similarity,
     extract_reward_term,
@@ -183,6 +192,8 @@ class PipelineConfig:
 
   random_init: bool = False                # if True, generate a random initial sequence instead of reading from FASTA
   random_init_max_residues: int = 80       # max length of randomly generated initial sequence
+
+  boltz_ensemble_n: int = 1                # Number of Boltz predictions to average (1 = no ensembling)
 
 
 def _to_path(x: Any) -> Path:
@@ -280,7 +291,11 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     deduplicate_sequences=bool(pick("deduplicate_sequences", True)),
     random_init=bool(pick("random_init", False)),
     random_init_max_residues=int(pick("random_init_max_residues", 80)),
+    boltz_ensemble_n=int(pick("boltz_ensemble_n", 1)),
   )
+
+  if cfg.boltz_ensemble_n < 1:
+    raise ValueError(f"boltz_ensemble_n must be >= 1, got {cfg.boltz_ensemble_n}")
 
   if cfg.proposal_method not in ("profam", "random_mutation"):
     raise ValueError(
@@ -602,6 +617,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     help=(
       "Maximum number of residues for the randomly generated initial sequence "
       "when random_init is true (default: 80)."
+    ),
+  )
+
+  # Boltz ensembling for noise reduction.
+  p.add_argument(
+    "--boltz_ensemble_n",
+    type=int,
+    default=None,
+    help=(
+      "Number of Boltz structure predictions to run per sequence and average "
+      "to reduce noise in the energy estimate. Default: 1 (no ensembling). "
+      "Higher values (e.g., 3) reduce noise but increase compute time."
     ),
   )
 
@@ -1415,6 +1442,7 @@ def evaluate_sequences_with_bagel(
   cycle_index: int,
   cycle_dir: Path,
   enforce_template: bool = True,
+  boltz_ensemble_n: int = 1,
 ) -> Tuple[List[float], List[Dict[str, Any]], List[Any]]:
   """
   For each sequence, build a single-chain BAGEL System, run the required
@@ -1425,6 +1453,9 @@ def evaluate_sequences_with_bagel(
   The folding oracle is only called when at least one energy term requires
   a FoldingOracle; otherwise no structure prediction is performed and no
   CIF files are written.
+
+  When boltz_ensemble_n > 1, run folding N times per sequence and average
+  the energy terms to reduce noise in the reward signal.
 
   Returns:
     - energies: list of total energies, one per input sequence
@@ -1487,6 +1518,9 @@ def evaluate_sequences_with_bagel(
   # sequence needs it, we call it once instead of N times.  This loads
   # the model once and processes all inputs sequentially, saving ~30 s
   # of model-load overhead per additional sequence.
+  #
+  # When boltz_ensemble_n > 1, we run folding multiple times per sequence
+  # and average the energy terms to reduce noise.
   # ------------------------------------------------------------------
 
   # Check which sequences need a folding oracle.
@@ -1494,22 +1528,42 @@ def evaluate_sequences_with_bagel(
     any(isinstance(o, FoldingOracle) for o in d["oracles_needed"])
     for d in per_seq_data
   ]
+
+  # For ensembling, we store a list of folding results per sequence
+  # batch_folding_results[i] = [result_1, result_2, ..., result_n] or None if all failed
   batch_folding_results: List[Any] = [None] * len(sequences)
 
   if any(needs_folding) and hasattr(folding_oracle, "predict_batch"):
     # Collect the chain-lists that need folding.
     batch_indices = [i for i, nf in enumerate(needs_folding) if nf]
     batch_chains = [per_seq_data[i]["all_chains"] for i in batch_indices]
-    # Fold each individually so a single failure doesn't crash the batch.
+
+    if boltz_ensemble_n > 1:
+      print(f"  Running {boltz_ensemble_n}x Boltz ensemble for noise reduction...")
+
+    # Fold each sequence boltz_ensemble_n times
     for i, chains in zip(batch_indices, batch_chains):
-      try:
-        batch_folding_results[i] = folding_oracle.predict(chains=chains)
-      except Exception as exc:
-        print(f"  Sequence {i}: folding failed ({exc}); will assign inf energy")
+      ensemble_results = []
+      for ensemble_idx in range(boltz_ensemble_n):
+        try:
+          result = folding_oracle.predict(chains=chains)
+          ensemble_results.append(result)
+        except Exception as exc:
+          if ensemble_idx == 0:
+            print(f"  Sequence {i}: folding failed ({exc}); will assign inf energy")
+          # Continue trying other ensemble members
+
+      if ensemble_results:
+        # Store all successful results for averaging
+        batch_folding_results[i] = ensemble_results
+      else:
         batch_folding_results[i] = None
 
   # ------------------------------------------------------------------
   # Phase 3: Compute energies using the (pre-computed) oracle results.
+  #
+  # When ensembling, we compute energies for each folding result and
+  # average them to get a more stable energy estimate.
   # ------------------------------------------------------------------
   energies: List[float] = []
   details: List[Dict[str, Any]] = []
@@ -1519,67 +1573,111 @@ def evaluate_sequences_with_bagel(
     d = per_seq_data[idx]
     energy_terms = d["energy_terms"]
 
-    oracles_result = OraclesResultDict()
-    folding_result = None
+    # Check if we have ensemble results
+    ensemble_results = batch_folding_results[idx]
+    if ensemble_results is None:
+      # No folding results available
+      if needs_folding[idx]:
+        print(f"  Sequence {idx}: batch_folding_results is None, marking as folding_failed")
+        energies.append(float("inf"))
+        folding_results.append(None)
+        details.append({"total_energy": float("inf"), "error": "folding_failed"})
+        continue
 
-    folding_failed = False
-    for oracle in d["oracles_needed"]:
-      if isinstance(oracle, FoldingOracle):
-        if batch_folding_results[idx] is not None:
-          # Use the pre-computed batch result.
-          result = batch_folding_results[idx]
-        else:
-          # Folding failed for this sequence — skip energy computation.
-          print(f"  Sequence {idx}: batch_folding_results is None, marking as folding_failed")
-          folding_failed = True
-          break
-      else:
-        # Non-folding oracle — call sequentially.
-        try:
-          result = oracle.predict(chains=d["all_chains"])
-        except Exception as exc:
-          print(f"  Sequence {idx}: non-folding oracle {type(oracle).__name__} failed: {exc}")
-          folding_failed = True
-          break
-      oracles_result[oracle] = result
-      if isinstance(oracle, FoldingOracle):
-        folding_result = result
+    # For non-ensemble case, wrap single result in list for uniform handling
+    if not isinstance(ensemble_results, list):
+      ensemble_results = [ensemble_results] if ensemble_results is not None else []
 
-    if folding_failed:
+    if not ensemble_results and needs_folding[idx]:
       energies.append(float("inf"))
       folding_results.append(None)
       details.append({"total_energy": float("inf"), "error": "folding_failed"})
       continue
 
-    total_energy = 0.0
-    per_term: Dict[str, float] = {}
-    for term in energy_terms:
-      try:
-        unweighted, weighted = term.compute(oracles_result=oracles_result)
-        per_term[term.name] = float(unweighted)
-        total_energy += float(weighted)
-      except (ValueError, Exception) as exc:
-        if not enforce_template:
-          print(
-            f"  Sequence {idx}: caught {type(exc).__name__} in {term.name}, "
-            f"assigning inf energy ({exc})"
-          )
-          per_term[term.name] = float("inf")
-          total_energy = float("inf")
-          break
-        else:
-          raise
+    # Compute energies for each ensemble member and average
+    ensemble_energies: List[float] = []
+    ensemble_per_terms: List[Dict[str, float]] = []
+    best_folding_result = None
+    best_energy = float("inf")
 
-    energies.append(total_energy)
-    folding_results.append(folding_result)
-    details.append(
-      {
+    for ens_idx, ens_result in enumerate(ensemble_results):
+      oracles_result = OraclesResultDict()
+      folding_failed = False
+
+      for oracle in d["oracles_needed"]:
+        if isinstance(oracle, FoldingOracle):
+          oracles_result[oracle] = ens_result
+        else:
+          # Non-folding oracle — call sequentially.
+          try:
+            result = oracle.predict(chains=d["all_chains"])
+            oracles_result[oracle] = result
+          except Exception as exc:
+            print(f"  Sequence {idx} ensemble {ens_idx}: non-folding oracle {type(oracle).__name__} failed: {exc}")
+            folding_failed = True
+            break
+
+      if folding_failed:
+        continue
+
+      # Compute energy for this ensemble member
+      total_energy = 0.0
+      per_term: Dict[str, float] = {}
+      term_failed = False
+
+      for term in energy_terms:
+        try:
+          unweighted, weighted = term.compute(oracles_result=oracles_result)
+          per_term[term.name] = float(unweighted)
+          total_energy += float(weighted)
+        except (ValueError, Exception) as exc:
+          if not enforce_template:
+            per_term[term.name] = float("inf")
+            total_energy = float("inf")
+            term_failed = True
+            break
+          else:
+            raise
+
+      if not term_failed and total_energy < float("inf"):
+        ensemble_energies.append(total_energy)
+        ensemble_per_terms.append(per_term)
+        if total_energy < best_energy:
+          best_energy = total_energy
+          best_folding_result = ens_result
+
+    # Average the ensemble energies
+    if ensemble_energies:
+      avg_energy = sum(ensemble_energies) / len(ensemble_energies)
+
+      # Average the per-term energies
+      avg_per_term: Dict[str, float] = {}
+      all_term_names = set()
+      for pt in ensemble_per_terms:
+        all_term_names.update(pt.keys())
+      for term_name in all_term_names:
+        term_values = [pt.get(term_name, 0.0) for pt in ensemble_per_terms if term_name in pt]
+        if term_values:
+          avg_per_term[term_name] = sum(term_values) / len(term_values)
+
+      energies.append(avg_energy)
+      folding_results.append(best_folding_result)  # Keep the best structure for visualization
+
+      detail_entry = {
         "index": idx,
         "sequence": seq,
-        "energy": total_energy,
-        "energy_terms": per_term,
+        "energy": avg_energy,
+        "energy_terms": avg_per_term,
       }
-    )
+      if len(ensemble_energies) > 1:
+        detail_entry["ensemble_n"] = len(ensemble_energies)
+        detail_entry["ensemble_energies"] = ensemble_energies
+        detail_entry["ensemble_std"] = float(np.std(ensemble_energies))
+      details.append(detail_entry)
+    else:
+      energies.append(float("inf"))
+      folding_results.append(None)
+      details.append({"total_energy": float("inf"), "error": "all_ensemble_failed"})
 
   # Save structures for sequences where the folding oracle was called.
   if any(fr is not None for fr in folding_results):
@@ -1738,6 +1836,26 @@ def run_pipeline(
           f"prior=Beta({cfg.proposal_bandit_prior_alpha}, {cfg.proposal_bandit_prior_beta}), "
           f"relative_reward={cfg.proposal_bandit_relative_reward}")
 
+  # SelectionManager: unified orchestrator for Thompson sampling / greedy selection.
+  # Used when selection_strategy="thompson" OR when proposal_bandit is enabled
+  # (to ensure progeny are registered as new arms even in the greedy+bandit case).
+  selection_manager: SelectionManager | None = None
+  if thompson_sampler is not None:
+    # Choose prompt selector based on selection_strategy
+    if cfg.selection_strategy == "thompson":
+      prompt_selector = ThompsonPromptSelector()
+    else:
+      prompt_selector = GreedyPromptSelector()
+    selection_manager = SelectionManager(
+      thompson_sampler=thompson_sampler,
+      prompt_selector=prompt_selector,
+      reward_term=cfg.thompson_reward_term,
+      max_arms=cfg.thompson_max_arms,
+      max_identity=cfg.thompson_max_identity,
+    )
+    print(f"  SelectionManager: selector={prompt_selector.method_name}, "
+          f"reward_term={cfg.thompson_reward_term}, max_arms={cfg.thompson_max_arms}")
+
   # Sequence deduplication cache: maps sequence string → (energy, details_dict).
   # Populated during evaluation; checked before folding to skip duplicates.
   seen_sequences: Dict[str, tuple] = {}
@@ -1753,6 +1871,7 @@ def run_pipeline(
       cycle_index=0,
       cycle_dir=cfg.output_dir / "cycle_000_seed",
       enforce_template=cfg.enforce_template,
+      boltz_ensemble_n=cfg.boltz_ensemble_n,
     )
     seed_best_idx = int(np.argmin(seed_energies))
     seed_best_energy = float(seed_energies[seed_best_idx])
@@ -2030,6 +2149,7 @@ def run_pipeline(
           cycle_index=cycle,
           cycle_dir=cycle_dir,
           enforce_template=cfg.enforce_template,
+          boltz_ensemble_n=cfg.boltz_ensemble_n,
         )
 
         # Merge results: novel gets fresh evaluation, duplicates get cached.
@@ -2059,6 +2179,7 @@ def run_pipeline(
           cycle_index=cycle,
           cycle_dir=cycle_dir,
           enforce_template=cfg.enforce_template,
+          boltz_ensemble_n=cfg.boltz_ensemble_n,
         )
 
       # When enforce_template is False, sequences with template mismatches
@@ -2138,205 +2259,121 @@ def run_pipeline(
       pool_energies = list(energies)
       pool_offset = 0
 
-    # --- Thompson sampling branch ---
+    # --- SelectionManager branch: unified Thompson/greedy arm management ---
     thompson_cycle_state: Dict[str, Any] | None = None
     thompson_selected_arm_id: int | None = None
     thompson_progeny_reward: float | None = None
 
-    if cfg.selection_strategy == "thompson" and thompson_sampler is not None:
-      # Extract per-sequence reward term values.
-      reward_values = extract_reward_term(details, cfg.thompson_reward_term)
-      n_finite = sum(1 for v in reward_values if math.isfinite(v))
-      n_inf = len(reward_values) - n_finite
-      print(f"  Thompson [{cfg.thompson_reward_term}]: {n_finite} finite, {n_inf} inf "
-            f"out of {len(reward_values)} progeny")
-      if n_finite > 0:
-        finite_vals = [v for v in reward_values if math.isfinite(v)]
-        print(f"    progeny {cfg.thompson_reward_term} range: "
-              f"[{min(finite_vals):.4f}, {max(finite_vals):.4f}], "
-              f"mean={np.mean(finite_vals):.4f}")
+    if selection_manager is not None:
+      # Get reward statistics for logging.
+      reward_stats = selection_manager.get_reward_stats(details)
+      print(f"  Selection [{reward_stats['reward_term']}]: "
+            f"{reward_stats['n_finite']} finite, {reward_stats['n_inf']} inf "
+            f"out of {reward_stats['n_total']} progeny")
+      if reward_stats['n_finite'] > 0:
+        print(f"    progeny {reward_stats['reward_term']} range: "
+              f"[{reward_stats['min']:.4f}, {reward_stats['max']:.4f}], "
+              f"mean={reward_stats['mean']:.4f}")
 
-      # Update the parent arm's posterior with the best progeny's reward.
-      # The parent arm is the one that was selected last cycle to condition on.
-      # On cycle 1 the parent is the best seed arm (set during init).
-      if hasattr(thompson_sampler, '_last_selected_arm_id'):
-        parent_id = thompson_sampler._last_selected_arm_id
-        parent_arm = thompson_sampler.arms[parent_id]
-        print(f"  Thompson POSTERIOR UPDATE for parent arm {parent_id} ({parent_arm.name}):")
-        print(f"    before: α={parent_arm.alpha:.4f}, β={parent_arm.beta_param:.4f}, "
-              f"E[θ]={parent_arm.alpha/(parent_arm.alpha+parent_arm.beta_param):.4f}")
-        # Find the best (most negative) finite reward value among progeny.
-        finite_rewards = [(i, v) for i, v in enumerate(reward_values) if math.isfinite(v)]
-        if finite_rewards:
-          best_progeny_idx, best_progeny_ipsae = min(finite_rewards, key=lambda x: x[1])
-          thompson_sampler.update_arm(parent_id, best_progeny_ipsae)
-          thompson_progeny_reward = ThompsonSampler._ipsae_to_reward(best_progeny_ipsae)
-          print(f"    best progeny: idx={best_progeny_idx}, "
-                f"{cfg.thompson_reward_term}={best_progeny_ipsae:.4f}, "
-                f"reward={thompson_progeny_reward:.4f}")
-          print(f"    after:  α={parent_arm.alpha:.4f}, β={parent_arm.beta_param:.4f}, "
-                f"E[θ]={parent_arm.alpha/(parent_arm.alpha+parent_arm.beta_param):.4f}")
+      # 1. Update the parent arm's posterior with the best progeny's reward.
+      update_stats = selection_manager.update_parent_posterior(details)
+      if update_stats is not None:
+        print(f"  Thompson POSTERIOR UPDATE for parent arm {update_stats['parent_arm_id']} "
+              f"({update_stats['parent_name']}):")
+        if update_stats['updated']:
+          print(f"    before: α={update_stats['alpha_before']:.4f}, "
+                f"β={update_stats['beta_before']:.4f}")
+          print(f"    best progeny: idx={update_stats['best_progeny_idx']}, "
+                f"{selection_manager.reward_term}={update_stats['best_progeny_ipsae']:.4f}, "
+                f"reward={update_stats['progeny_reward']:.4f}")
+          print(f"    after:  α={update_stats['alpha_after']:.4f}, "
+                f"β={update_stats['beta_after']:.4f}, "
+                f"E[θ]={update_stats['expected_reward_after']:.4f}")
+          thompson_progeny_reward = update_stats['progeny_reward']
         else:
           print(f"    no finite progeny — posterior unchanged")
 
-      # Update temperature bandit with the same reward signal.
+      # 2. Update temperature bandit with the progeny reward.
       if temp_bandit is not None and cycle_temperature is not None:
-        # Use the best finite progeny reward for the temperature update too.
         temp_reward = thompson_progeny_reward if thompson_progeny_reward is not None else 0.0
         temp_bandit.update(cycle_temperature, temp_reward)
         print(f"  Temperature bandit UPDATE: T={cycle_temperature}, "
               f"reward={temp_reward:.4f}")
 
-      # Update proposal bandit with the same reward signal.
+      # 3. Update proposal bandit with the progeny reward.
       if proposal_bandit is not None:
-        if cfg.proposal_bandit_relative_reward and thompson_progeny_reward is not None:
-          # Relative reward for Thompson branch: use best_progeny_ipsae vs prev_injection_best_energy
-          finite_rewards_ts = [(i, v) for i, v in enumerate(reward_values) if math.isfinite(v)]
-          if finite_rewards_ts:
-            best_progeny_ipsae_ts = min(v for _, v in finite_rewards_ts)
-            relative_reward = float(np.clip(
-              prev_injection_best_energy - best_progeny_ipsae_ts, -1.0, 1.0
-            ))
-            prop_reward = (relative_reward + 1.0) / 2.0
-            print(f"  Proposal bandit: parent_E={prev_injection_best_energy:.4f}, "
-                  f"progeny_E={best_progeny_ipsae_ts:.4f}, relative={relative_reward:+.4f}")
-          else:
-            prop_reward = 0.5  # neutral if no finite progeny
+        if cfg.proposal_bandit_relative_reward and update_stats and update_stats.get('updated'):
+          best_progeny_ipsae = update_stats['best_progeny_ipsae']
+          relative_reward = float(np.clip(
+            prev_injection_best_energy - best_progeny_ipsae, -1.0, 1.0
+          ))
+          prop_reward = (relative_reward + 1.0) / 2.0
+          print(f"  Proposal bandit: parent_E={prev_injection_best_energy:.4f}, "
+                f"progeny_E={best_progeny_ipsae:.4f}, relative={relative_reward:+.4f}")
+        elif thompson_progeny_reward is not None:
+          prop_reward = thompson_progeny_reward
         else:
-          prop_reward = thompson_progeny_reward if thompson_progeny_reward is not None else 0.0
+          prop_reward = 0.5  # neutral if no finite progeny
         proposal_bandit.update(cycle_proposal_method, prop_reward)
         print(f"  Proposal bandit UPDATE: method={cycle_proposal_method}, "
               f"reward={prop_reward:.4f}")
 
-    # --- Proposal bandit update when running with greedy selection ---
-    if proposal_bandit is not None and cfg.selection_strategy != "thompson":
-      reward_values_pb = extract_reward_term(details, cfg.thompson_reward_term)
-      n_finite = sum(1 for v in reward_values_pb if math.isfinite(v))
-      n_inf = len(reward_values_pb) - n_finite
-      finite_rewards_pb = [v for v in reward_values_pb if math.isfinite(v)]
-      if finite_rewards_pb:
-        best_ipsae_pb = min(finite_rewards_pb)
-        if cfg.proposal_bandit_relative_reward:
-          # Relative reward: improvement over parent (previous best)
-          # parent_ipSAE - progeny_ipSAE: positive if progeny is better (more negative)
-          relative_reward = float(np.clip(
-            prev_injection_best_energy - best_ipsae_pb, -1.0, 1.0
-          ))
-          # Scale from [-1, 1] to [0, 1] for Beta distribution
-          prop_reward = (relative_reward + 1.0) / 2.0
-          print(f"  Proposal bandit: parent_E={prev_injection_best_energy:.4f}, "
-                f"progeny_E={best_ipsae_pb:.4f}, relative={relative_reward:+.4f}")
-        else:
-          # Absolute reward: clamp(-ipSAE, 0, 1)
-          prop_reward = float(np.clip(-best_ipsae_pb, 0.0, 1.0))
-      else:
-        prop_reward = 0.0
-      proposal_bandit.update(cycle_proposal_method, prop_reward)
-      print(f"  Proposal bandit UPDATE: method={cycle_proposal_method}, "
-            f"reward={prop_reward:.4f}")
+      # 4. Register ALL progeny as new arms (THE BUG FIX - this now happens
+      #    for BOTH selection_strategy="thompson" AND "greedy" with bandit).
+      reg_stats = selection_manager.register_progeny(gen_names, gen_seqs, details, cycle)
+      print(f"  Thompson: registered {reg_stats['n_registered']} new arms "
+            f"(total arms: {reg_stats['n_total_arms']})")
 
-      # Register all progeny with finite ipSAE as new arms.
-      parent_arm_id_for_progeny = getattr(thompson_sampler, '_last_selected_arm_id', None)
-      n_registered = 0
-      for i, (name, seq, ipsae_val) in enumerate(zip(gen_names, gen_seqs, reward_values_pb)):
-        if math.isfinite(ipsae_val):
-          arm = thompson_sampler.add_arm(
-            sequence=seq, name=name, ipsae_raw=ipsae_val,
-            parent_arm_id=parent_arm_id_for_progeny, cycle=cycle,
-          )
-          n_registered += 1
-      print(f"  Thompson: registered {n_registered} new arms "
-            f"(total arms: {len(thompson_sampler.arms)})")
+      # 5. Prune arms to maintain diversity.
+      prune_stats = selection_manager.prune_arms()
+      if prune_stats.get('pruned'):
+        print(f"  Thompson PRUNING: {prune_stats['arms_before']} → "
+              f"{prune_stats['arms_after']} arms "
+              f"(max_identity={selection_manager.max_identity:.2f})")
+        print(f"    retained: {prune_stats['retained_ids']}")
+        print(f"    pruned: {prune_stats['pruned_ids']}")
 
-      # Prune to top-K diverse arms if configured.
-      if cfg.thompson_max_arms > 0:
-        prune_stats = thompson_sampler.prune_to_top_k_diverse(
-          k=cfg.thompson_max_arms,
-          max_identity=cfg.thompson_max_identity,
-        )
-        if prune_stats["arms_before"] > prune_stats["arms_after"]:
-          print(f"  Thompson PRUNING: {prune_stats['arms_before']} → "
-                f"{prune_stats['arms_after']} arms "
-                f"(max_identity={cfg.thompson_max_identity:.2f})")
-          print(f"    retained: {prune_stats['retained_ids']}")
-          print(f"    pruned: {prune_stats['pruned_ids']}")
-
-      # Select next arm via Thompson sampling — log the top candidates.
-      b = thompson_sampler.exploit_bias
-      print(f"  Thompson ARM SELECTION (m_samples={thompson_sampler.m_samples}, "
+      # 6. Select next prompt using the configured selector (greedy or thompson).
+      b = selection_manager.thompson_sampler.exploit_bias
+      selector_name = selection_manager.prompt_selector.method_name
+      print(f"  ARM SELECTION ({selector_name}, "
+            f"m_samples={selection_manager.thompson_sampler.m_samples}, "
             f"exploit_bias={b:.1f}):")
-      # Sample θ for all arms and log top-5 for transparency.
-      # arm_thetas: List[tuple] = []
-      # for arm in thompson_sampler.arms.values():
-      #   thetas = rng.beta(arm.alpha * b, arm.beta_param * b, size=thompson_sampler.m_samples)
-      #   theta = float(np.max(thetas))
-      #   arm_thetas.append((arm, theta))
-      # arm_thetas.sort(key=lambda x: x[1], reverse=True)
-      # for rank, (arm, theta) in enumerate(arm_thetas[:5]):
-      #   marker = " <<<" if rank == 0 else ""
-      #   print(f"    rank {rank+1}: arm {arm.arm_id} ({arm.name}), "
-      #         f"θ={theta:.4f}, α={arm.alpha:.2f}, β={arm.beta_param:.2f}, "
-      #         f"E[θ]={arm.alpha/(arm.alpha+arm.beta_param):.4f}, "
-      #         f"selected {arm.times_selected}x, "
-      #         f"created cycle {arm.created_at_cycle}{marker}")
-      # if len(arm_thetas) > 5:
-      #   print(f"    ... ({len(arm_thetas) - 5} more arms)")
+      selection_result = selection_manager.select_prompt()
+      next_arm = selection_result.selected_arm
+      thompson_selected_arm_id = next_arm.arm_id if next_arm else None
 
-      # Greedy selection: pick the arm with the best (lowest) ipSAE.
-      arms_by_ipsae = sorted(
-        thompson_sampler.arms.values(),
-        key=lambda a: a.ipsae_raw,  # lowest (most negative) is best
-      )
-      next_arm = arms_by_ipsae[0]
-      thompson_selected_arm_id = next_arm.arm_id
-      thompson_sampler._last_selected_arm_id = next_arm.arm_id  # type: ignore[attr-defined]
-      next_arm.times_selected += 1  # track selection count
-      print(f"  GREEDY SELECTED → arm {next_arm.arm_id} ({next_arm.name})")
-      print(f"    ipSAE_raw={next_arm.ipsae_raw:.4f} (BEST of {len(thompson_sampler.arms)} arms)")
+      print(f"  {selector_name.upper()} SELECTED → arm {next_arm.arm_id} ({next_arm.name})")
+      print(f"    ipSAE_raw={next_arm.ipsae_raw:.4f} "
+            f"(of {len(selection_manager.thompson_sampler.arms)} arms)")
       print(f"    times_selected={next_arm.times_selected}, "
             f"parent_arm={next_arm.parent_arm_id}, "
             f"created_cycle={next_arm.created_at_cycle}")
       print(f"  PROMPT SEQUENCE: {next_arm.sequence}")
 
-      # Set injection to the single selected arm's sequence.
-      injected_names = [next_arm.name]
-      injected_seqs = [next_arm.sequence]
+      # 7. Build injection set from selection result.
+      injected_names, injected_seqs = selection_manager.build_injection_set(selection_result)
+
+      # Update prev_injection_best_energy for next cycle's relative reward calculation.
+      prev_injection_best_energy = selection_result.selected_ipsae
 
       # For logging compatibility, create minimal selected_indices pointing at
       # the best generated sequence this cycle.
       selected_indices = np.array([int(np.argmin(energies))])
 
       # Build detailed thompson cycle state for JSON logging.
-      # Include top-10 arms by expected reward for quick inspection.
-      arms_by_expected = sorted(
-        thompson_sampler.arms.values(),
-        key=lambda a: a.alpha / (a.alpha + a.beta_param),
-        reverse=True,
-      )
-      top_arms_summary = []
-      for arm in arms_by_expected[:10]:
-        top_arms_summary.append({
-          "arm_id": arm.arm_id,
-          "name": arm.name,
-          "alpha": arm.alpha,
-          "beta_param": arm.beta_param,
-          "expected_reward": arm.alpha / (arm.alpha + arm.beta_param),
-          "ipsae_raw": arm.ipsae_raw,
-          "times_selected": arm.times_selected,
-          "total_reward_credited": arm.total_reward_credited,
-          "parent_arm_id": arm.parent_arm_id,
-          "created_at_cycle": arm.created_at_cycle,
-        })
-      thompson_cycle_state: Dict[str, Any] = {
-        "num_arms": len(thompson_sampler.arms),
+      top_arms_summary = selection_manager.get_top_arms_summary(n=10)
+      thompson_cycle_state = {
+        "num_arms": len(selection_manager.thompson_sampler.arms),
         "selected_arm_id": thompson_selected_arm_id,
         "selected_arm_name": next_arm.name,
         "selected_arm_expected_reward": next_arm.alpha / (next_arm.alpha + next_arm.beta_param),
         "selected_arm_alpha": next_arm.alpha,
         "selected_arm_beta": next_arm.beta_param,
         "selected_arm_times_selected": next_arm.times_selected,
-        "progeny_finite_count": n_finite,
-        "progeny_inf_count": n_inf,
+        "selection_method": selector_name,
+        "progeny_finite_count": reward_stats['n_finite'],
+        "progeny_inf_count": reward_stats['n_inf'],
         "top_10_arms": top_arms_summary,
       }
       if cycle_temperature is not None:
@@ -2350,9 +2387,10 @@ def run_pipeline(
       # Save full thompson arms state to dedicated file.
       arms_path = cfg.output_dir / "thompson_arms.json"
       with arms_path.open("w") as f:
-        json.dump(thompson_sampler.get_state_dict(), f, indent=2)
+        json.dump(selection_manager.thompson_sampler.get_state_dict(), f, indent=2)
 
       # Save per-cycle thompson decision log (append, one entry per cycle).
+      reward_values_for_log = extract_reward_term(details, selection_manager.reward_term)
       decision_log_path = cfg.output_dir / "thompson_decisions.jsonl"
       decision_entry: Dict[str, Any] = {
         "cycle": cycle,
@@ -2361,11 +2399,12 @@ def run_pipeline(
         "selected_arm_alpha": next_arm.alpha,
         "selected_arm_beta": next_arm.beta_param,
         "selected_arm_expected_reward": next_arm.alpha / (next_arm.alpha + next_arm.beta_param),
+        "selection_method": selector_name,
         "progeny_reward": thompson_progeny_reward,
-        "progeny_finite_count": n_finite,
-        "total_arms": len(thompson_sampler.arms),
+        "progeny_finite_count": reward_stats['n_finite'],
+        "total_arms": len(selection_manager.thompson_sampler.arms),
         "progeny_ipsae_values": [
-          round(v, 6) if math.isfinite(v) else None for v in reward_values_pb
+          round(v, 6) if math.isfinite(v) else None for v in reward_values_for_log
         ],
         "top_10_arms": top_arms_summary,
       }
@@ -2381,7 +2420,7 @@ def run_pipeline(
 
       # Save statistics.
       swap_accepted = True
-      swap_reason = "thompson"
+      swap_reason = f"selection_manager_{selector_name}"
       update_cycle_log(
         log_path=cycle_log_path,
         cycle_index=cycle,
