@@ -2775,6 +2775,14 @@ def run_pipeline(
           all_seqs = list(injected_seqs)
     output_fasta(all_names, all_seqs, str(profam_input_fasta))
 
+    # Log the prompt sequences being used for this cycle.
+    print(f"  Prompt sequences ({len(all_seqs)} total):")
+    for i, (name, seq) in enumerate(zip(all_names, all_seqs)):
+      if i < 3 or i == len(all_seqs) - 1:  # show first 3 and last
+        print(f"    [{i}] {name}: {seq}")
+      elif i == 3:
+        print(f"    ... ({len(all_seqs) - 4} more sequences) ...")
+
     # Temperature bandit: sample a temperature for this cycle.
     cycle_temperature: float | None = None
     if temp_bandit is not None:
@@ -3082,19 +3090,21 @@ def run_pipeline(
       # if len(arm_thetas) > 5:
       #   print(f"    ... ({len(arm_thetas) - 5} more arms)")
 
-      # Now do the actual selection (re-sample for the real pick).
-      next_arm = thompson_sampler.select_arm()
+      # Greedy selection: pick the arm with the best (lowest) ipSAE.
+      arms_by_ipsae = sorted(
+        thompson_sampler.arms.values(),
+        key=lambda a: a.ipsae_raw,  # lowest (most negative) is best
+      )
+      next_arm = arms_by_ipsae[0]
       thompson_selected_arm_id = next_arm.arm_id
       thompson_sampler._last_selected_arm_id = next_arm.arm_id  # type: ignore[attr-defined]
-      print(f"  Thompson SELECTED → arm {next_arm.arm_id} ({next_arm.name})")
-      print(f"    ipSAE_raw={next_arm.ipsae_raw:.4f}, "
-            f"α={next_arm.alpha:.4f}, β={next_arm.beta_param:.4f}, "
-            f"E[θ]={next_arm.alpha/(next_arm.alpha+next_arm.beta_param):.4f}")
+      next_arm.times_selected += 1  # track selection count
+      print(f"  GREEDY SELECTED → arm {next_arm.arm_id} ({next_arm.name})")
+      print(f"    ipSAE_raw={next_arm.ipsae_raw:.4f} (BEST of {len(thompson_sampler.arms)} arms)")
       print(f"    times_selected={next_arm.times_selected}, "
-            f"total_reward_credited={next_arm.total_reward_credited:.4f}, "
             f"parent_arm={next_arm.parent_arm_id}, "
             f"created_cycle={next_arm.created_at_cycle}")
-      print(f"    seq (first 60): {next_arm.sequence[:60]}...")
+      print(f"  PROMPT SEQUENCE: {next_arm.sequence}")
 
       # Set injection to the single selected arm's sequence.
       injected_names = [next_arm.name]
