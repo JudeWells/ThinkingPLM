@@ -7,7 +7,6 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --time=24:00:00
-#SBATCH --account=u6bz
 
 # Usage: sbatch slurm_greedy_diverse_job.sh <config_path>
 # Example: sbatch slurm_greedy_diverse_job.sh configs/pipelines/bench_2GDZ_15PGDH_3helix_greedy_diverse.yaml
@@ -29,9 +28,11 @@ echo "============================================"
 # Navigate to project directory
 cd /projects/u6bz/jude/ThinkingPLM
 
-# Activate conda environment
-source /home/judewells/miniconda3/etc/profile.d/conda.sh
+# Activate conda environment (disable -u temporarily as conda scripts have unbound vars)
+set +u
+source /lus/lfs1aip2/projects/u6bz/jude/miniforge3/etc/profile.d/conda.sh
 conda activate profam_bagel
+set -u
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
