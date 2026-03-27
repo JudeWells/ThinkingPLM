@@ -26,11 +26,13 @@ EXTRA_2GDZ_SCAFFOLDS = {
 }
 
 CONFIG_TEMPLATE = """\
-## Benchmark: Greedy selection with diverse arm pruning — {target} / {scaffold}
+## Benchmark: Greedy selection with diverse arm pruning + relative reward — {target} / {scaffold}
 ##
-## Uses thompson_max_arms to limit the number of arms, keeping only the
-## top-K most diverse sequences (by sequence identity threshold).
-## This reduces exploration overhead while maintaining diversity.
+## Key features:
+## - thompson_max_arms=10: limits arms to top-K diverse sequences
+## - proposal_bandit_relative_reward=true: rewards based on improvement over parent
+##   (prevents lock-in from absolute energy inflation over time)
+## - Beta(2,2) prior: slightly informative prior for proposal bandit
 
 initial_fasta: {initial_fasta}
 
@@ -46,7 +48,7 @@ energy_config: {energy_config}
 
 f_inject: 0.25
 max_cycles: 100
-output_dir: outputs/bench/{target}/{scaffold}/greedy_diverse
+output_dir: outputs/bench/{target}/{scaffold}/greedy_diverse_rel
 softmax_temperature: 0.01
 random_seed: {seed}
 run_on_modal: false
@@ -70,7 +72,12 @@ thompson_exploit_bias: 5.0
 thompson_temperature_bins: null
 thompson_proposal_bandit: true
 
-# NEW: Diverse arm pruning
+# Proposal bandit: Beta(2,2) prior + relative reward
+proposal_bandit_prior_alpha: 2.0
+proposal_bandit_prior_beta: 2.0
+proposal_bandit_relative_reward: true
+
+# Diverse arm pruning
 thompson_max_arms: 10
 thompson_max_identity: 0.95
 
@@ -103,7 +110,7 @@ def main():
                 seed=seed,
             )
 
-            config_name = f"bench_{target}_{scaffold}_greedy_diverse.yaml"
+            config_name = f"bench_{target}_{scaffold}_greedy_diverse_rel.yaml"
             config_path = config_dir / config_name
 
             config_path.write_text(config_content)

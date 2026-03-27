@@ -259,12 +259,16 @@ class ProposalBandit:
     def __init__(
         self,
         exploit_bias: float = 1.0,
+        prior_alpha: float = 2.0,
+        prior_beta: float = 2.0,
         rng: np.random.Generator | None = None,
     ):
         self.exploit_bias = max(1.0, exploit_bias)
+        self.prior_alpha = prior_alpha
+        self.prior_beta = prior_beta
         self.rng = rng if rng is not None else np.random.default_rng()
-        self.alphas = {m: 1.0 for m in self.METHODS}
-        self.betas = {m: 1.0 for m in self.METHODS}
+        self.alphas = {m: prior_alpha for m in self.METHODS}
+        self.betas = {m: prior_beta for m in self.METHODS}
         self.times_selected: Dict[str, int] = {m: 0 for m in self.METHODS}
         self.total_reward: Dict[str, float] = {m: 0.0 for m in self.METHODS}
 

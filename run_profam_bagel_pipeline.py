@@ -174,6 +174,9 @@ class PipelineConfig:
   thompson_exploit_bias: float = 1.0      # >1 = more exploitation (concentrate posteriors)
   thompson_temperature_bins: List[float] | None = None  # e.g. [0.6, 0.8, 1.0, 1.3]; None = fixed temperature
   thompson_proposal_bandit: bool = False   # True = Thompson bandit over proposal methods (profam vs random_mutation)
+  proposal_bandit_prior_alpha: float = 2.0  # Beta prior α for proposal bandit (higher = more confident prior)
+  proposal_bandit_prior_beta: float = 2.0   # Beta prior β for proposal bandit
+  proposal_bandit_relative_reward: bool = False  # Use relative reward (improvement over parent) instead of absolute ipSAE
   thompson_max_arms: int = 0              # max arms to retain (0 = unlimited); prunes to top-K diverse arms
   thompson_max_identity: float = 0.95     # max sequence identity between retained arms (diversity threshold)
   deduplicate_sequences: bool = True       # skip folding for already-seen sequences, retry generation
@@ -269,6 +272,9 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
       else [float(x) for x in pick("thompson_temperature_bins")]
     ),
     thompson_proposal_bandit=bool(pick("thompson_proposal_bandit", False)),
+    proposal_bandit_prior_alpha=float(pick("proposal_bandit_prior_alpha", 2.0)),
+    proposal_bandit_prior_beta=float(pick("proposal_bandit_prior_beta", 2.0)),
+    proposal_bandit_relative_reward=bool(pick("proposal_bandit_relative_reward", False)),
     thompson_max_arms=int(pick("thompson_max_arms", 0)),
     thompson_max_identity=float(pick("thompson_max_identity", 0.95)),
     deduplicate_sequences=bool(pick("deduplicate_sequences", True)),
@@ -1724,9 +1730,13 @@ def run_pipeline(
   if cfg.thompson_proposal_bandit:
     proposal_bandit = ProposalBandit(
       exploit_bias=cfg.thompson_exploit_bias,
+      prior_alpha=cfg.proposal_bandit_prior_alpha,
+      prior_beta=cfg.proposal_bandit_prior_beta,
       rng=rng,
     )
-    print(f"  Proposal bandit: methods={ProposalBandit.METHODS}")
+    print(f"  Proposal bandit: methods={ProposalBandit.METHODS}, "
+          f"prior=Beta({cfg.proposal_bandit_prior_alpha}, {cfg.proposal_bandit_prior_beta}), "
+          f"relative_reward={cfg.proposal_bandit_relative_reward}")
 
   # Sequence deduplication cache: maps sequence string → (energy, details_dict).
   # Populated during evaluation; checked before folding to skip duplicates.
@@ -2179,7 +2189,21 @@ def run_pipeline(
 
       # Update proposal bandit with the same reward signal.
       if proposal_bandit is not None:
-        prop_reward = thompson_progeny_reward if thompson_progeny_reward is not None else 0.0
+        if cfg.proposal_bandit_relative_reward and thompson_progeny_reward is not None:
+          # Relative reward for Thompson branch: use best_progeny_ipsae vs prev_injection_best_energy
+          finite_rewards_ts = [(i, v) for i, v in enumerate(reward_values) if math.isfinite(v)]
+          if finite_rewards_ts:
+            best_progeny_ipsae_ts = min(v for _, v in finite_rewards_ts)
+            relative_reward = float(np.clip(
+              prev_injection_best_energy - best_progeny_ipsae_ts, -1.0, 1.0
+            ))
+            prop_reward = (relative_reward + 1.0) / 2.0
+            print(f"  Proposal bandit: parent_E={prev_injection_best_energy:.4f}, "
+                  f"progeny_E={best_progeny_ipsae_ts:.4f}, relative={relative_reward:+.4f}")
+          else:
+            prop_reward = 0.5  # neutral if no finite progeny
+        else:
+          prop_reward = thompson_progeny_reward if thompson_progeny_reward is not None else 0.0
         proposal_bandit.update(cycle_proposal_method, prop_reward)
         print(f"  Proposal bandit UPDATE: method={cycle_proposal_method}, "
               f"reward={prop_reward:.4f}")
@@ -2192,7 +2216,19 @@ def run_pipeline(
       finite_rewards_pb = [v for v in reward_values_pb if math.isfinite(v)]
       if finite_rewards_pb:
         best_ipsae_pb = min(finite_rewards_pb)
-        prop_reward = float(np.clip(-best_ipsae_pb, 0.0, 1.0))
+        if cfg.proposal_bandit_relative_reward:
+          # Relative reward: improvement over parent (previous best)
+          # parent_ipSAE - progeny_ipSAE: positive if progeny is better (more negative)
+          relative_reward = float(np.clip(
+            prev_injection_best_energy - best_ipsae_pb, -1.0, 1.0
+          ))
+          # Scale from [-1, 1] to [0, 1] for Beta distribution
+          prop_reward = (relative_reward + 1.0) / 2.0
+          print(f"  Proposal bandit: parent_E={prev_injection_best_energy:.4f}, "
+                f"progeny_E={best_ipsae_pb:.4f}, relative={relative_reward:+.4f}")
+        else:
+          # Absolute reward: clamp(-ipSAE, 0, 1)
+          prop_reward = float(np.clip(-best_ipsae_pb, 0.0, 1.0))
       else:
         prop_reward = 0.0
       proposal_bandit.update(cycle_proposal_method, prop_reward)
