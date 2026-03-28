@@ -20,7 +20,7 @@ energy_config: configs/energy/energy_boltz_ipsae_4OYD_epstein_barr.yaml
 
 f_inject: 0.25
 max_cycles: 100
-output_dir: outputs/bench_ensemble/4OYD_epstein_barr/ankyrin/bandit_thompson
+output_dir: outputs/bench_ensemble_v2/4OYD_epstein_barr/ankyrin/bandit_thompson
 softmax_temperature: 0.01
 random_seed: 223724
 run_on_modal: false

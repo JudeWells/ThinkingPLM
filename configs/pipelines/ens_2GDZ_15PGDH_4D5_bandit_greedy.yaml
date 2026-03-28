@@ -19,7 +19,7 @@ energy_config: configs/energy/example_energy_boltz_ipsae_2GDZ_15PGDH.yaml
 
 f_inject: 0.25
 max_cycles: 100
-output_dir: outputs/bench_ensemble/2GDZ_15PGDH/4D5/bandit_greedy
+output_dir: outputs/bench_ensemble_v2/2GDZ_15PGDH/4D5/bandit_greedy
 softmax_temperature: 0.01
 random_seed: 223724
 run_on_modal: false
