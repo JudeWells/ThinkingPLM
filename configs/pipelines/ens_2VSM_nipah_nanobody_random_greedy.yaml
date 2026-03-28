@@ -17,7 +17,7 @@ energy_config: configs/energy/energy_boltz_ipsae_2VSM_nipah.yaml
 
 f_inject: 0.25
 max_cycles: 100
-output_dir: outputs/bench_ensemble/2VSM_nipah/nanobody/random_greedy
+output_dir: outputs/bench_ensemble_v2/2VSM_nipah/nanobody/random_greedy
 softmax_temperature: 0.01
 random_seed: 223724
 run_on_modal: false

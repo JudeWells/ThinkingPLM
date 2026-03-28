@@ -21,7 +21,7 @@ energy_config: configs/energy/example_energy_boltz_ipsae_2GDZ_15PGDH.yaml
 
 f_inject: 0.25
 max_cycles: 100
-output_dir: outputs/bench_ensemble/2GDZ_15PGDH/3helix/thompson_eb8_bandit_rel
+output_dir: outputs/bench_ensemble_v2/2GDZ_15PGDH/3helix/thompson_eb8_bandit_rel
 softmax_temperature: 0.01
 random_seed: 223724
 run_on_modal: false

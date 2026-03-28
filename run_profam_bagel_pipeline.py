@@ -1081,6 +1081,117 @@ def build_folding_oracle(energy_cfg: Dict[str, Any], force_modal: bool = False) 
     )
 
 
+def run_boltz_ensemble(
+  boltz_oracle: Boltz,
+  chains: list,
+  n_samples: int,
+  seed: int | None = None,
+) -> List[Any]:
+  """
+  Run Boltz with --diffusion_samples N to generate N samples in a SINGLE call.
+
+  This is more efficient than calling Boltz N times because the model is loaded
+  only once. Each sample uses different random noise in the diffusion process.
+
+  Parameters
+  ----------
+  boltz_oracle : Boltz
+      The BAGEL Boltz oracle instance.
+  chains : list[Chain]
+      The chains to fold.
+  n_samples : int
+      Number of diffusion samples to generate.
+  seed : int or None
+      Random seed for reproducibility. If None, Boltz uses internal randomness.
+
+  Returns
+  -------
+  list[BoltzResult]
+      One BoltzResult per sample.
+  """
+  import tempfile
+
+  if n_samples <= 1:
+    # Just use the standard single-sample path
+    return [boltz_oracle.predict(chains=chains)]
+
+  with tempfile.TemporaryDirectory(prefix="boltz_ensemble_") as tmpdir:
+    tmpdir_path = Path(tmpdir)
+
+    # Write Boltz input YAML
+    yaml_path = tmpdir_path / "input.yaml"
+    boltz_oracle._chains_to_boltz_yaml(chains, yaml_path)
+
+    out_dir = tmpdir_path / "output"
+    out_dir.mkdir()
+
+    # Build args with --diffusion_samples N
+    boltz_args = boltz_oracle._build_boltz_args(str(yaml_path), str(out_dir))
+    boltz_args.extend(["--diffusion_samples", str(n_samples)])
+    if seed is not None:
+      boltz_args.extend(["--seed", str(seed)])
+
+    # Run Boltz once
+    boltz_oracle._run_boltz_subprocess(boltz_args)
+
+    # Parse ALL model outputs (model_0, model_1, ..., model_{n_samples-1})
+    results = []
+    for model_idx in range(n_samples):
+      try:
+        # Find files for this model index
+        output_files = _find_boltz_model_files(out_dir, model_idx)
+        if "cif" not in output_files:
+          print(f"    Warning: No CIF for model_{model_idx}, skipping")
+          continue
+
+        result = boltz_oracle._parse_output(output_files, chains)
+        results.append(result)
+      except Exception as exc:
+        print(f"    Warning: Failed to parse model_{model_idx}: {exc}")
+        continue
+
+    if not results:
+      raise RuntimeError("No valid Boltz samples could be parsed")
+
+    return results
+
+
+def _find_boltz_model_files(out_dir: Path, model_idx: int) -> Dict[str, Path]:
+  """
+  Find Boltz output files for a specific model index.
+
+  Unlike BAGEL's _find_output_files which only returns the first match,
+  this finds files for a specific model_idx (e.g., *_model_2.cif).
+  """
+  files: Dict[str, Path] = {}
+
+  # Find CIF file for this model
+  cif_pattern = f"*_model_{model_idx}.cif"
+  cif_files = list(out_dir.rglob(cif_pattern))
+  cif_files = [f for f in cif_files if not any(
+    f.name.startswith(p) for p in ("pae_", "plddt_", "confidence_")
+  )]
+  if cif_files:
+    files["cif"] = cif_files[0]
+
+  # Find PAE NPZ for this model
+  pae_files = list(out_dir.rglob(f"pae_*_model_{model_idx}.npz"))
+  if pae_files:
+    files["pae"] = pae_files[0]
+
+  # Find pLDDT NPZ for this model
+  plddt_files = list(out_dir.rglob(f"plddt_*_model_{model_idx}.npz"))
+  if plddt_files:
+    files["plddt"] = plddt_files[0]
+
+  # Find confidence JSON for this model
+  conf_files = list(out_dir.rglob(f"confidence_*_model_{model_idx}.json"))
+  if conf_files:
+    files["confidence"] = conf_files[0]
+
+  return files
+
+
 def parse_residue_range_string(spec: str) -> List[int]:
   """
   Parse a compact residue specification string into a sorted list of 0-based
@@ -1538,25 +1649,45 @@ def evaluate_sequences_with_bagel(
     batch_indices = [i for i, nf in enumerate(needs_folding) if nf]
     batch_chains = [per_seq_data[i]["all_chains"] for i in batch_indices]
 
-    if boltz_ensemble_n > 1:
-      print(f"  Running {boltz_ensemble_n}x Boltz ensemble for noise reduction...")
+    # Check if we can use the efficient --diffusion_samples path (Boltz only)
+    is_boltz = isinstance(folding_oracle, Boltz)
 
-    # Fold each sequence boltz_ensemble_n times
+    if boltz_ensemble_n > 1 and is_boltz:
+      print(f"  Running Boltz with --diffusion_samples {boltz_ensemble_n} (efficient ensemble)...")
+    elif boltz_ensemble_n > 1:
+      print(f"  Running {boltz_ensemble_n}x folding ensemble for noise reduction...")
+
+    # Fold each sequence
     for i, chains in zip(batch_indices, batch_chains):
-      ensemble_results = []
-      for ensemble_idx in range(boltz_ensemble_n):
-        try:
-          result = folding_oracle.predict(chains=chains)
-          ensemble_results.append(result)
-        except Exception as exc:
-          if ensemble_idx == 0:
-            print(f"  Sequence {i}: folding failed ({exc}); will assign inf energy")
-          # Continue trying other ensemble members
+      try:
+        if boltz_ensemble_n > 1 and is_boltz:
+          # Use efficient --diffusion_samples path for Boltz
+          ensemble_results = run_boltz_ensemble(
+            boltz_oracle=folding_oracle,
+            chains=chains,
+            n_samples=boltz_ensemble_n,
+            seed=None,  # Use internal randomness for diversity
+          )
+        elif boltz_ensemble_n > 1:
+          # Non-Boltz oracle: loop N times
+          ensemble_results = []
+          for ensemble_idx in range(boltz_ensemble_n):
+            try:
+              result = folding_oracle.predict(chains=chains)
+              ensemble_results.append(result)
+            except Exception as exc:
+              if ensemble_idx == 0:
+                print(f"  Sequence {i}: folding failed ({exc}); will assign inf energy")
+        else:
+          # Single sample
+          ensemble_results = [folding_oracle.predict(chains=chains)]
 
-      if ensemble_results:
-        # Store all successful results for averaging
-        batch_folding_results[i] = ensemble_results
-      else:
+        if ensemble_results:
+          batch_folding_results[i] = ensemble_results
+        else:
+          batch_folding_results[i] = None
+      except Exception as exc:
+        print(f"  Sequence {i}: folding failed ({exc}); will assign inf energy")
         batch_folding_results[i] = None
 
   # ------------------------------------------------------------------
@@ -1672,6 +1803,8 @@ def evaluate_sequences_with_bagel(
       if len(ensemble_energies) > 1:
         detail_entry["ensemble_n"] = len(ensemble_energies)
         detail_entry["ensemble_energies"] = ensemble_energies
+        detail_entry["ensemble_min"] = float(np.min(ensemble_energies))
+        detail_entry["ensemble_max"] = float(np.max(ensemble_energies))
         detail_entry["ensemble_std"] = float(np.std(ensemble_energies))
       details.append(detail_entry)
     else:
