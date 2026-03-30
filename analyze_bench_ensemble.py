@@ -3,6 +3,7 @@
 import json
 import csv
 import os
+import base64
 from pathlib import Path
 from collections import defaultdict
 import matplotlib
@@ -630,26 +631,19 @@ def make_bandit_vs_random_scatter(experiments):
     print(f"Saved {fname}")
 
 
-def generate_markdown(experiments):
-    """Generate the analysis report as markdown."""
-    lines = []
-    lines.append("# Ensemble Benchmark Analysis: Strategy Comparison\n")
-    lines.append("Comparative analysis of ensemble-scored protein design strategies across targets and scaffolds.\n")
-    lines.append("## Strategies\n")
-    lines.append("| Strategy | Description |")
-    lines.append("|----------|-------------|")
-    lines.append("| **Bandit Greedy** | ProFam/random bandit with greedy (argmax) arm selection |")
-    lines.append("| **Bandit Thompson** | ProFam/random bandit with Thompson sampling arm selection |")
-    lines.append("| **Random Greedy** | Random mutations with greedy (argmax) selection |")
-    lines.append("| **Random Thompson** | Random mutations with Thompson sampling selection |")
-    lines.append("| **Bandit Thompson EB8** | ProFam/random bandit with Thompson sampling, ensemble budget=8 |")
-    lines.append("")
+def embed_image_base64(img_path):
+    """Read an image file and return a base64 data URI."""
+    if not img_path.exists():
+        return ""
+    with open(img_path, "rb") as f:
+        data = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:image/png;base64,{data}"
 
-    # Summary table
-    lines.append("## Summary Table\n")
-    lines.append("| Target | Scaffold | Strategy | Cycles | Seed Energy | Min Energy | Improvements | Improvement Rate |")
-    lines.append("|--------|----------|----------|--------|-------------|------------|--------------|------------------|")
 
+def generate_html(experiments):
+    """Generate the analysis report as a self-contained HTML page with embedded images."""
+
+    # Collect statistics for the report
     wins = defaultdict(int)
     all_keys = sorted(experiments.keys())
 
@@ -658,30 +652,9 @@ def generate_markdown(experiments):
         best_strat = min(strategies.keys(), key=lambda s: strategies[s]["min_energy"])
         wins[best_strat] += 1
 
-        for strat in STRATEGY_ORDER:
-            if strat not in strategies:
-                continue
-            d = strategies[strat]
-            rate = f"{d['n_improvements']/d['total_cycles']:.1%}" if d["total_cycles"] > 0 else "N/A"
-            marker = " **BEST**" if strat == best_strat else ""
-            lines.append(
-                f"| {target} | {scaffold} | {STRATEGY_LABELS[strat]} | "
-                f"{d['total_cycles']} | {d['seed_energy']:.4f} | {d['min_energy']:.4f}{marker} | "
-                f"{d['n_improvements']} | {rate} |"
-            )
-
-    lines.append("\n## Strategy Win Count (Lowest Min Energy)\n")
-    lines.append("| Strategy | Wins |")
-    lines.append("|----------|------|")
-    for strat in STRATEGY_ORDER:
-        if strat in wins:
-            lines.append(f"| {STRATEGY_LABELS[strat]} | {wins[strat]} |")
-
     total = sum(wins.values())
-    lines.append(f"| **Total experiments** | **{total}** |")
 
     # Aggregate stats
-    lines.append("\n## Aggregate Statistics\n")
     strategy_min_energies = defaultdict(list)
     strategy_improvements = defaultdict(list)
     strategy_rates = defaultdict(list)
@@ -695,8 +668,219 @@ def generate_markdown(experiments):
                 strategy_rates[strat].append(d["n_improvements"] / d["total_cycles"])
             strategy_energy_gain[strat].append(d["seed_energy"] - d["min_energy"])
 
-    lines.append("| Strategy | N | Mean Min Energy | Median Min Energy | Mean Improvements | Mean Rate | Mean Energy Gain |")
-    lines.append("|----------|---|-----------------|-------------------|-------------------|-----------|------------------|")
+    by_target = defaultdict(list)
+    for (target, scaffold), strategies in experiments.items():
+        by_target[target].append((scaffold, strategies))
+
+    # Build HTML
+    html_parts = []
+    html_parts.append('''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ensemble Benchmark Analysis</title>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --card-bg: #16213e;
+            --text-color: #eee;
+            --accent-color: #00bfff;
+            --accent-green: #00e676;
+            --accent-red: #ff6b6b;
+            --accent-orange: #ffab40;
+            --border-color: #333;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 {
+            color: var(--accent-color);
+            text-align: center;
+            font-size: 2.5em;
+            margin-bottom: 0.5em;
+            text-shadow: 0 0 20px rgba(0, 191, 255, 0.3);
+        }
+        h2 {
+            color: var(--accent-green);
+            border-bottom: 2px solid var(--accent-green);
+            padding-bottom: 10px;
+            margin-top: 40px;
+        }
+        h3 { color: var(--accent-orange); margin-top: 30px; }
+        .subtitle {
+            text-align: center;
+            color: #aaa;
+            margin-bottom: 40px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: var(--card-bg);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        th {
+            background: rgba(0, 191, 255, 0.2);
+            color: var(--accent-color);
+            font-weight: 600;
+        }
+        tr:hover { background: rgba(255, 255, 255, 0.05); }
+        .best { color: var(--accent-green); font-weight: bold; }
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: var(--card-bg);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            border: 1px solid var(--border-color);
+        }
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: var(--accent-color);
+        }
+        .stat-label { color: #aaa; font-size: 0.9em; }
+        .img-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+        .findings {
+            background: linear-gradient(135deg, rgba(0, 191, 255, 0.1), rgba(0, 230, 118, 0.1));
+            border-left: 4px solid var(--accent-color);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .findings li { margin: 10px 0; }
+        .h2h-result {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            margin: 5px;
+            font-weight: bold;
+        }
+        .h2h-win { background: rgba(0, 230, 118, 0.3); }
+        .h2h-lose { background: rgba(255, 107, 107, 0.3); }
+        .h2h-tie { background: rgba(255, 171, 64, 0.3); }
+        .target-section {
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 30px 0;
+        }
+        .collapsible {
+            cursor: pointer;
+            user-select: none;
+        }
+        .collapsible:after {
+            content: ' ▼';
+            font-size: 0.8em;
+        }
+        .img-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+            gap: 20px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+''')
+
+    html_parts.append('<h1>🧬 Ensemble Benchmark Analysis</h1>')
+    html_parts.append('<p class="subtitle">Comparative analysis of ensemble-scored protein design strategies across targets and scaffolds</p>')
+
+    # Strategy descriptions
+    html_parts.append('<h2>Strategies</h2>')
+    html_parts.append('<div class="card">')
+    html_parts.append('<table>')
+    html_parts.append('<tr><th>Strategy</th><th>Description</th></tr>')
+    html_parts.append('<tr><td><strong>Bandit Greedy</strong></td><td>ProFam/random bandit with greedy (argmax) arm selection</td></tr>')
+    html_parts.append('<tr><td><strong>Bandit Thompson</strong></td><td>ProFam/random bandit with Thompson sampling arm selection</td></tr>')
+    html_parts.append('<tr><td><strong>Random Greedy</strong></td><td>Random mutations with greedy (argmax) selection</td></tr>')
+    html_parts.append('<tr><td><strong>Random Thompson</strong></td><td>Random mutations with Thompson sampling selection</td></tr>')
+    html_parts.append('<tr><td><strong>Bandit Thompson EB8</strong></td><td>ProFam/random bandit with Thompson sampling, ensemble budget=8</td></tr>')
+    html_parts.append('</table>')
+    html_parts.append('</div>')
+
+    # Win count stats cards
+    html_parts.append('<h2>Strategy Win Count</h2>')
+    html_parts.append('<div class="stats-grid">')
+    for strat in STRATEGY_ORDER:
+        if strat in wins:
+            pct = wins[strat] / total * 100 if total > 0 else 0
+            html_parts.append(f'''
+            <div class="stat-card">
+                <div class="stat-value">{wins[strat]}</div>
+                <div class="stat-label">{STRATEGY_LABELS[strat]}<br>({pct:.0f}% of {total})</div>
+            </div>''')
+    html_parts.append('</div>')
+
+    # Summary table
+    html_parts.append('<h2>Summary Table</h2>')
+    html_parts.append('<div class="card" style="overflow-x: auto;">')
+    html_parts.append('<table>')
+    html_parts.append('<tr><th>Target</th><th>Scaffold</th><th>Strategy</th><th>Cycles</th><th>Seed Energy</th><th>Min Energy</th><th>Improvements</th><th>Rate</th></tr>')
+
+    for (target, scaffold) in all_keys:
+        strategies = experiments[(target, scaffold)]
+        best_strat = min(strategies.keys(), key=lambda s: strategies[s]["min_energy"])
+
+        for strat in STRATEGY_ORDER:
+            if strat not in strategies:
+                continue
+            d = strategies[strat]
+            rate = f"{d['n_improvements']/d['total_cycles']:.1%}" if d["total_cycles"] > 0 else "N/A"
+            best_class = ' class="best"' if strat == best_strat else ''
+            marker = " ✓" if strat == best_strat else ""
+            html_parts.append(
+                f'<tr><td>{target}</td><td>{scaffold}</td><td>{STRATEGY_LABELS[strat]}</td>'
+                f'<td>{d["total_cycles"]}</td><td>{d["seed_energy"]:.4f}</td>'
+                f'<td{best_class}>{d["min_energy"]:.4f}{marker}</td>'
+                f'<td>{d["n_improvements"]}</td><td>{rate}</td></tr>'
+            )
+
+    html_parts.append('</table>')
+    html_parts.append('</div>')
+
+    # Aggregate stats table
+    html_parts.append('<h2>Aggregate Statistics</h2>')
+    html_parts.append('<div class="card" style="overflow-x: auto;">')
+    html_parts.append('<table>')
+    html_parts.append('<tr><th>Strategy</th><th>N</th><th>Mean Min Energy</th><th>Median Min Energy</th><th>Mean Improvements</th><th>Mean Rate</th><th>Mean Energy Gain</th></tr>')
+
     for strat in STRATEGY_ORDER:
         if strat not in strategy_min_energies:
             continue
@@ -704,135 +888,161 @@ def generate_markdown(experiments):
         imp = strategy_improvements[strat]
         rates = strategy_rates[strat]
         gains = strategy_energy_gain[strat]
-        lines.append(
-            f"| {STRATEGY_LABELS[strat]} | {len(me)} | {np.mean(me):.4f} | {np.median(me):.4f} | "
-            f"{np.mean(imp):.1f} | {np.mean(rates):.1%} | {np.mean(gains):.4f} |"
+        html_parts.append(
+            f'<tr><td>{STRATEGY_LABELS[strat]}</td><td>{len(me)}</td>'
+            f'<td>{np.mean(me):.4f}</td><td>{np.median(me):.4f}</td>'
+            f'<td>{np.mean(imp):.1f}</td><td>{np.mean(rates):.1%}</td><td>{np.mean(gains):.4f}</td></tr>'
         )
 
-    # Head-to-head: greedy vs thompson
-    lines.append("\n## Head-to-Head: Greedy vs Thompson\n")
+    html_parts.append('</table>')
+    html_parts.append('</div>')
+
+    # Head-to-head comparisons
+    html_parts.append('<h2>Head-to-Head Comparisons</h2>')
+    html_parts.append('<div class="card">')
+
+    html_parts.append('<h3>Greedy vs Thompson</h3>')
     for prefix, label in [("bandit", "Bandit"), ("random", "Random")]:
         greedy_key = f"{prefix}_greedy"
         thompson_key = f"{prefix}_thompson"
-        greedy_wins, thompson_wins, ties = 0, 0, 0
+        greedy_wins_count, thompson_wins_count, ties = 0, 0, 0
         for (target, scaffold), strategies in experiments.items():
             if greedy_key in strategies and thompson_key in strategies:
                 ge = strategies[greedy_key]["min_energy"]
                 te = strategies[thompson_key]["min_energy"]
                 if ge < te:
-                    greedy_wins += 1
+                    greedy_wins_count += 1
                 elif te < ge:
-                    thompson_wins += 1
+                    thompson_wins_count += 1
                 else:
                     ties += 1
-        lines.append(f"**{label}**: Greedy wins {greedy_wins}, Thompson wins {thompson_wins}, Ties {ties}\n")
+        html_parts.append(f'<p><strong>{label}:</strong> ')
+        html_parts.append(f'<span class="h2h-result h2h-win">Greedy {greedy_wins_count}</span> ')
+        html_parts.append(f'<span class="h2h-result h2h-win">Thompson {thompson_wins_count}</span> ')
+        html_parts.append(f'<span class="h2h-result h2h-tie">Ties {ties}</span></p>')
 
-    # Head-to-head: bandit vs random
-    lines.append("\n## Head-to-Head: Bandit vs Random\n")
+    html_parts.append('<h3>Bandit vs Random</h3>')
     for suffix, label in [("greedy", "Greedy"), ("thompson", "Thompson")]:
         bandit_key = f"bandit_{suffix}"
         random_key = f"random_{suffix}"
-        bandit_wins, random_wins, ties = 0, 0, 0
+        bandit_wins_count, random_wins_count, ties = 0, 0, 0
         for (target, scaffold), strategies in experiments.items():
             if bandit_key in strategies and random_key in strategies:
                 be = strategies[bandit_key]["min_energy"]
                 re = strategies[random_key]["min_energy"]
                 if be < re:
-                    bandit_wins += 1
+                    bandit_wins_count += 1
                 elif re < be:
-                    random_wins += 1
+                    random_wins_count += 1
                 else:
                     ties += 1
-        lines.append(f"**{label}**: Bandit wins {bandit_wins}, Random wins {random_wins}, Ties {ties}\n")
+        html_parts.append(f'<p><strong>{label}:</strong> ')
+        html_parts.append(f'<span class="h2h-result h2h-win">Bandit {bandit_wins_count}</span> ')
+        html_parts.append(f'<span class="h2h-result h2h-win">Random {random_wins_count}</span> ')
+        html_parts.append(f'<span class="h2h-result h2h-tie">Ties {ties}</span></p>')
 
-    # Per-target breakdown
-    lines.append("\n## Per-Target Analysis\n")
-    by_target = defaultdict(list)
-    for (target, scaffold), strategies in experiments.items():
-        by_target[target].append((scaffold, strategies))
-
-    for target in sorted(by_target.keys()):
-        scaffolds = by_target[target]
-        lines.append(f"### {target}\n")
-        lines.append(f"Scaffolds tested: {', '.join(s for s, _ in sorted(scaffolds))}\n")
-
-        target_best = {}
-        for scaffold, strategies in scaffolds:
-            for strat, d in strategies.items():
-                if strat not in target_best or d["min_energy"] < target_best[strat]["min_energy"]:
-                    target_best[strat] = {"min_energy": d["min_energy"], "scaffold": scaffold, **d}
-
-        lines.append("| Strategy | Best Scaffold | Min Energy | Improvements | Cycles |")
-        lines.append("|----------|---------------|------------|--------------|--------|")
-        for strat in STRATEGY_ORDER:
-            if strat not in target_best:
-                continue
-            tb = target_best[strat]
-            lines.append(
-                f"| {STRATEGY_LABELS[strat]} | {tb['scaffold']} | "
-                f"{tb['min_energy']:.4f} | {tb['n_improvements']} | {tb['total_cycles']} |"
-            )
-
-        lines.append(f"\n![Trajectories](trajectories_{target}.png)\n")
-        lines.append(f"![Ensemble Std](ensemble_std_{target}.png)\n")
-        lines.append(f"![Bandit Arms](bandit_arms_{target}.png)\n")
-        lines.append(f"![Proposal Method](proposal_method_{target}.png)\n")
-
-    # Figures
-    lines.append("## Comparative Plots\n")
-    lines.append("### Min Energy and Improvements Bar Chart\n")
-    lines.append("![Bar Comparison](bar_comparison.png)\n")
-    lines.append("### Min Energy Heatmap\n")
-    lines.append("![Heatmap](heatmap_min_energy.png)\n")
-    lines.append("### Aggregate Trajectories\n")
-    lines.append("![Aggregate](aggregate_trajectories.png)\n")
-    lines.append("### Greedy vs Thompson Scatter\n")
-    lines.append("![Greedy vs Thompson](greedy_vs_thompson_scatter.png)\n")
-    lines.append("### Bandit vs Random Scatter\n")
-    lines.append("![Bandit vs Random](bandit_vs_random_scatter.png)\n")
+    html_parts.append('</div>')
 
     # Key findings
-    lines.append("\n## Key Findings\n")
-    finding_num = 1
+    html_parts.append('<h2>Key Findings</h2>')
+    html_parts.append('<div class="findings"><ol>')
 
     if wins:
         best_overall = max(wins.keys(), key=lambda s: wins[s])
-        lines.append(f"{finding_num}. **{STRATEGY_LABELS[best_overall]}** achieves the lowest energy "
-                     f"in {wins[best_overall]}/{total} experiments "
-                     f"({wins[best_overall]/total:.0%}).\n")
-        finding_num += 1
+        pct = wins[best_overall] / total * 100 if total > 0 else 0
+        html_parts.append(f'<li><strong>{STRATEGY_LABELS[best_overall]}</strong> achieves the lowest energy '
+                         f'in {wins[best_overall]}/{total} experiments ({pct:.0f}%).</li>')
 
     ranked = sorted(
         [(s, np.mean(strategy_min_energies[s])) for s in strategy_min_energies],
         key=lambda x: x[1]
     )
-    ranking_str = " > ".join(
-        f"**{STRATEGY_LABELS[s]}** ({v:.4f})" for s, v in ranked
+    ranking_str = " &gt; ".join(
+        f"<strong>{STRATEGY_LABELS[s]}</strong> ({v:.4f})" for s, v in ranked
     )
-    lines.append(f"{finding_num}. Mean min energy ranking: {ranking_str}.\n")
-    finding_num += 1
+    html_parts.append(f'<li>Mean min energy ranking: {ranking_str}.</li>')
 
     rate_strs = []
     for strat in STRATEGY_ORDER:
         if strat in strategy_rates:
             rate_strs.append(f"{STRATEGY_LABELS[strat]} {np.mean(strategy_rates[strat]):.1%}")
     if rate_strs:
-        lines.append(f"{finding_num}. Improvement rates: {', '.join(rate_strs)}.\n")
-        finding_num += 1
+        html_parts.append(f'<li>Improvement rates: {", ".join(rate_strs)}.</li>')
 
     gain_strs = []
     for strat in STRATEGY_ORDER:
         if strat in strategy_energy_gain:
             gain_strs.append(f"{STRATEGY_LABELS[strat]} ({np.mean(strategy_energy_gain[strat]):.4f})")
     if gain_strs:
-        lines.append(f"{finding_num}. Mean energy gain from seed: {', '.join(gain_strs)}.\n")
-        finding_num += 1
+        html_parts.append(f'<li>Mean energy gain from seed: {", ".join(gain_strs)}.</li>')
 
-    md_text = "\n".join(lines)
-    md_path = OUT_DIR / "benchmark_analysis.md"
-    with open(md_path, "w") as f:
-        f.write(md_text)
-    print(f"Saved {md_path}")
+    html_parts.append('</ol></div>')
+
+    # Comparative plots section
+    html_parts.append('<h2>Comparative Plots</h2>')
+
+    for title, fname in [
+        ("Min Energy and Improvements Bar Chart", "bar_comparison.png"),
+        ("Min Energy Heatmap", "heatmap_min_energy.png"),
+        ("Aggregate Trajectories", "aggregate_trajectories.png"),
+        ("Greedy vs Thompson Scatter", "greedy_vs_thompson_scatter.png"),
+        ("Bandit vs Random Scatter", "bandit_vs_random_scatter.png"),
+    ]:
+        img_path = OUT_DIR / fname
+        img_data = embed_image_base64(img_path)
+        if img_data:
+            html_parts.append(f'<h3>{title}</h3>')
+            html_parts.append(f'<div class="img-container"><img src="{img_data}" alt="{title}"></div>')
+
+    # Per-target analysis
+    html_parts.append('<h2>Per-Target Analysis</h2>')
+
+    for target in sorted(by_target.keys()):
+        scaffolds_list = by_target[target]
+        html_parts.append(f'<div class="target-section">')
+        html_parts.append(f'<h3>{target}</h3>')
+        html_parts.append(f'<p>Scaffolds tested: {", ".join(s for s, _ in sorted(scaffolds_list))}</p>')
+
+        target_best = {}
+        for scaffold, strategies in scaffolds_list:
+            for strat, d in strategies.items():
+                if strat not in target_best or d["min_energy"] < target_best[strat]["min_energy"]:
+                    target_best[strat] = {"min_energy": d["min_energy"], "scaffold": scaffold, **d}
+
+        html_parts.append('<table>')
+        html_parts.append('<tr><th>Strategy</th><th>Best Scaffold</th><th>Min Energy</th><th>Improvements</th><th>Cycles</th></tr>')
+        for strat in STRATEGY_ORDER:
+            if strat not in target_best:
+                continue
+            tb = target_best[strat]
+            html_parts.append(
+                f'<tr><td>{STRATEGY_LABELS[strat]}</td><td>{tb["scaffold"]}</td>'
+                f'<td>{tb["min_energy"]:.4f}</td><td>{tb["n_improvements"]}</td><td>{tb["total_cycles"]}</td></tr>'
+            )
+        html_parts.append('</table>')
+
+        # Target-specific plots
+        html_parts.append('<div class="img-grid">')
+        for plot_type, plot_name in [
+            ("Energy Trajectories", f"trajectories_{target}.png"),
+            ("Ensemble Uncertainty", f"ensemble_std_{target}.png"),
+            ("Bandit Arm Count", f"bandit_arms_{target}.png"),
+            ("ProFam Selection Rate", f"proposal_method_{target}.png"),
+        ]:
+            img_path = OUT_DIR / plot_name
+            img_data = embed_image_base64(img_path)
+            if img_data:
+                html_parts.append(f'<div class="img-container"><img src="{img_data}" alt="{plot_type}"></div>')
+        html_parts.append('</div>')
+        html_parts.append('</div>')
+
+    html_parts.append('</div></body></html>')
+
+    html_text = "\n".join(html_parts)
+    html_path = OUT_DIR / "benchmark_analysis.html"
+    with open(html_path, "w") as f:
+        f.write(html_text)
+    print(f"Saved {html_path}")
 
 
 def main():
@@ -855,8 +1065,8 @@ def main():
     make_proposal_method_plots(experiments)
     make_greedy_vs_thompson_scatter(experiments)
     make_bandit_vs_random_scatter(experiments)
-    print("\nGenerating markdown report...")
-    generate_markdown(experiments)
+    print("\nGenerating HTML report...")
+    generate_html(experiments)
     print("\nDone! Results in", OUT_DIR)
 
 

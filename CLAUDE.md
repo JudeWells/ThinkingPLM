@@ -2,6 +2,106 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Quick Start for Agents (AWS/Cloud)
+
+**Goal:** Get the pipeline running as fast as possible on a fresh cloud instance.
+
+### Recommended AWS Instance Types
+
+| Use Case | Instance Type | GPU | vCPU | Memory | Notes |
+|----------|---------------|-----|------|--------|-------|
+| **Local GPU runs** | `g5.xlarge` | A10G (24GB) | 4 | 16 GB | Best cost/performance for Boltz/ESMFold |
+| **Large batches** | `g5.2xlarge` | A10G (24GB) | 8 | 32 GB | More CPU for parallel preprocessing |
+| **Modal offload** | `t3.medium` | None | 2 | 4 GB | Cheapest; all GPU work on Modal cloud |
+| **Development** | `g4dn.xlarge` | T4 (16GB) | 4 | 16 GB | Budget option, slower folding |
+
+**AMI:** Use "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)" or similar with CUDA pre-installed.
+
+### One-Command Setup (Fresh Instance)
+
+```bash
+# 1. Clone and enter repo
+git clone https://github.com/JudeWells/ThinkingPLM.git && cd ThinkingPLM
+
+# 2. Run cloud setup (installs miniconda if needed, creates env, downloads model)
+chmod +x setup_cloud.sh && ./setup_cloud.sh
+
+# 3. Activate and run
+source ~/.bashrc && conda activate profam_bagel
+python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_campaign6_hairpin_elite.yaml
+```
+
+### Step-by-Step Setup (If One-Command Fails)
+
+```bash
+# 1. Ensure conda is available
+if ! command -v conda &> /dev/null; then
+    wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+    bash /tmp/miniconda.sh -b -p $HOME/miniconda3
+    eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
+    conda init bash
+    source ~/.bashrc
+fi
+
+# 2. Clone repo
+git clone https://github.com/JudeWells/ThinkingPLM.git
+cd ThinkingPLM
+
+# 3. Create environment
+chmod +x setup_environment.sh && ./setup_environment.sh
+
+# 4. Activate environment
+conda activate profam_bagel
+
+# 5. Download ProFam model checkpoint (~3GB)
+python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='.profam_repo/model_checkpoints/profam-1')"
+
+# 6. (Optional) Setup Modal for cloud GPU
+modal token new
+modal secret create huggingface-secret HF_TOKEN=hf_xxxxx
+
+# 7. Verify installation
+python -c "import bagel; import profam; from src.models.inference import ProFamSampler; print('OK')"
+```
+
+### Verify GPU Access
+
+```bash
+# Check NVIDIA driver
+nvidia-smi
+
+# Check PyTorch sees GPU
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}, Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}')"
+```
+
+### Common Cloud Issues
+
+| Problem | Solution |
+|---------|----------|
+| `conda: command not found` | Install miniconda: `wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash Miniconda3-latest-Linux-x86_64.sh -b` |
+| `CUDA out of memory` | Reduce `profam_num_samples` in config, or use Modal (`run_on_modal: true`) |
+| `No CUDA GPUs available` | Check `nvidia-smi`; may need `sudo nvidia-smi -pm 1` or driver install |
+| `libcudnn.so not found` | Install cuDNN: `conda install cudnn -c conda-forge` |
+| `Permission denied` on model download | Set `HF_TOKEN` env var or run `huggingface-cli login` |
+| Slow first run | Normal—ProFam/Boltz models download on first use (~10-15 min) |
+
+### Running Modes Quick Reference
+
+```bash
+# Modal cloud (recommended for most users) - GPU work happens on Modal's servers
+python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_campaign6_hairpin_elite.yaml
+
+# Local GPU (requires g5/g4dn instance)
+# Set run_on_modal: false in config YAML first
+export MODEL_DIR=~/.cache/bagel/models
+python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_berlin_hairpin_start.yaml
+
+# Check a run's progress
+tail -f outputs/campaign_name/cycle_stats.json
+```
+
+---
+
 ## Project Overview
 
 ProFam + BAGEL generative protein design pipeline. Iteratively generates protein sequences with a language model (ProFam), evaluates them via structure prediction and energy scoring (BAGEL/Boltz), and selects promising candidates for the next cycle. Current target: designing protein binders against **15-PGDH** (15-Hydroxyprostaglandin Dehydrogenase, PDB: 2GDZ) for the Berlin Bio x AI Hackathon.

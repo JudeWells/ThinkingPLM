@@ -585,7 +585,129 @@ Adjust the `#PBS -l` directives in the script as needed for your cluster.
 
 ---
 
-### 7. Outputs
+### 7. Running on AWS / Cloud VMs
+
+For cloud deployment on AWS EC2, GCP Compute Engine, Azure VMs, or similar infrastructure.
+
+#### 7.1 Recommended instance types (AWS)
+
+| Use Case | Instance Type | GPU | vCPU | Memory | Hourly Cost* |
+|----------|---------------|-----|------|--------|--------------|
+| **Production runs** | `g5.xlarge` | A10G (24GB) | 4 | 16 GB | ~$1.00 |
+| **Large batches** | `g5.2xlarge` | A10G (24GB) | 8 | 32 GB | ~$1.50 |
+| **Modal offload** | `t3.medium` | None | 2 | 4 GB | ~$0.04 |
+| **Budget GPU** | `g4dn.xlarge` | T4 (16GB) | 4 | 16 GB | ~$0.50 |
+
+*Prices approximate, on-demand, us-east-1. Use spot instances for ~70% savings.
+
+**Recommended AMI:** "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)" — comes with CUDA drivers pre-installed.
+
+#### 7.2 Quick setup (one command)
+
+For a fresh cloud instance with the repository already cloned:
+
+```bash
+cd ThinkingPLM
+chmod +x setup_cloud.sh && ./setup_cloud.sh
+source ~/.bashrc && conda activate profam_bagel
+```
+
+The `setup_cloud.sh` script:
+1. Installs Miniconda if conda is not available
+2. Creates the `profam_bagel` conda environment with all dependencies
+3. Downloads the ProFam model checkpoint (~3GB)
+4. Verifies GPU availability and all imports
+
+#### 7.3 Step-by-step setup
+
+If the one-command setup fails, follow these steps:
+
+```bash
+# 1. Install Miniconda (if conda not available)
+wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+bash /tmp/miniconda.sh -b -p $HOME/miniconda3
+eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
+conda init bash
+source ~/.bashrc
+
+# 2. Clone and enter repo
+git clone https://github.com/JudeWells/ThinkingPLM.git
+cd ThinkingPLM
+
+# 3. Run environment setup
+chmod +x setup_environment.sh
+./setup_environment.sh
+
+# 4. Activate and download model
+conda activate profam_bagel
+python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='.profam_repo/model_checkpoints/profam-1')"
+
+# 5. Verify GPU
+nvidia-smi
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
+```
+
+#### 7.4 GPU vs Modal mode
+
+**Option A: Local GPU mode** (requires GPU instance like g5.xlarge)
+
+Set `run_on_modal: false` in your pipeline config:
+```yaml
+run_on_modal: false
+```
+
+Run with:
+```bash
+export MODEL_DIR=~/.cache/bagel/models
+python run_profam_bagel_pipeline.py --config configs/pipelines/your_config.yaml
+```
+
+**Option B: Modal mode** (works on any instance, including CPU-only)
+
+Set `run_on_modal: true` in your pipeline config (this is the default). All GPU work happens on Modal's cloud infrastructure.
+
+First configure Modal:
+```bash
+modal token new                                          # Authenticate
+modal secret create huggingface-secret HF_TOKEN=hf_xxxxx # For model access
+```
+
+Then run:
+```bash
+python run_profam_bagel_pipeline.py --config configs/pipelines/your_config.yaml
+```
+
+#### 7.5 Cloud-specific troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `conda: command not found` | Run the Miniconda installation commands above |
+| `CUDA out of memory` | Reduce `profam_num_samples`, or use a larger GPU instance |
+| `No CUDA GPUs available` | Check `nvidia-smi`; may need driver install or instance restart |
+| `libcudnn.so not found` | `conda install cudnn -c conda-forge` |
+| SSH disconnects during long runs | Use `tmux` or `screen`: `tmux new -s pipeline` |
+| Slow first Modal run | Normal — container image builds on first run (~5-10 min) |
+
+#### 7.6 Running in background (recommended for long runs)
+
+```bash
+# Using tmux (recommended)
+tmux new -s pipeline
+conda activate profam_bagel
+python run_profam_bagel_pipeline.py --config configs/pipelines/your_config.yaml
+# Press Ctrl+B then D to detach; `tmux attach -t pipeline` to reconnect
+
+# Using nohup
+nohup python run_profam_bagel_pipeline.py --config configs/pipelines/your_config.yaml > run.log 2>&1 &
+tail -f run.log
+
+# Monitor progress
+tail -f outputs/your_run/cycle_stats.json
+```
+
+---
+
+### 8. Outputs
 
 For a run with `output_dir: outputs/pipeline_run1`, the pipeline creates:
 
@@ -609,33 +731,54 @@ For a run with `output_dir: outputs/pipeline_run1`, the pipeline creates:
 
 ---
 
-### 8. Troubleshooting
+### 9. Troubleshooting
+
+#### General issues
 
 | Problem | Solution |
 |---|---|
 | `modal.exception.AuthError: Token missing` | Run `modal token new` to authenticate |
 | `AssertionError: MODEL_DIR must be set` | Set `export MODEL_DIR=~/.cache/bagel/models` (or wherever your ESMFold weights are) |
 | `ImportError: lightning` or `torchvision` errors | torch/torchvision version mismatch — re-run `setup_environment.sh` or manually install matching versions (see Section 2) |
-| `boileroom` not found | Ensure BAGEL was installed: `pip install "biobagel[local] @ git+https://github.com/softnanolab/bagel.git"` |
-| ProFam checkpoint not found | Download with `python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='model_checkpoints/profam-1')"` |
+| `boileroom` not found | Ensure BAGEL was installed: `pip install "biobagel[local] @ git+https://github.com/JudeWells/bagel.git"` |
+| ProFam checkpoint not found | Download with `python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='.profam_repo/model_checkpoints/profam-1')"` |
 | Slow first Modal run | First run builds the container image; subsequent runs reuse the cached image |
 | `enforce_template` has no effect | The `fixed_positions` feature used by constrained generation is only available in newer (unreleased) versions of ProFam. The current GitHub version (`main` branch) does **not** support it. If your local ProFam has `fixed_positions` (e.g. from a development branch), the pipeline will use it; otherwise it prints a warning and generates freely. Template mismatches then receive infinity energy and the cycle is retried. |
 
+#### Cloud/AWS-specific issues
+
+| Problem | Solution |
+|---|---|
+| `conda: command not found` | Install Miniconda: `wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash Miniconda3-latest-Linux-x86_64.sh -b` then `source ~/.bashrc` |
+| `CUDA out of memory` | Reduce `profam_num_samples` in config, use smaller batch size, or upgrade to larger GPU instance |
+| `No CUDA GPUs available` | Check `nvidia-smi`; ensure you're on a GPU instance; may need `sudo nvidia-smi -pm 1` |
+| `libcudnn.so not found` | Install cuDNN: `conda install cudnn -c conda-forge` |
+| `libcuda.so.1: cannot open` | NVIDIA drivers not installed — use Deep Learning AMI or install drivers manually |
+| SSH disconnects during long runs | Use `tmux` or `screen` to keep session alive |
+| Disk space errors | Clear HuggingFace cache: `rm -rf ~/.cache/huggingface` |
+| `Permission denied` on HF download | Set `HF_TOKEN` env var or run `huggingface-cli login` |
+| Instance terminated mid-run | Use spot instance interruption handling or switch to on-demand
+
 ---
 
-### 9. Project structure
+### 10. Project structure
 
 ```
 profam_bagel/
 ├── run_profam_bagel_pipeline.py       # Main pipeline entrypoint
 ├── run_profam_bagel_modal_app.py      # Modal app for cloud execution
-├── setup_environment.sh               # Environment setup script
+├── setup_environment.sh               # Environment setup script (local/HPC)
+├── setup_cloud.sh                     # Cloud VM setup (AWS/GCP/Azure)
 ├── example_pipeline_config.yaml       # Example YAML config
 ├── example_energy_template_match.yaml # Example energy config (template matching)
 ├── example_energy_lis_binding.yaml    # Example energy config (LIS binding with target chain)
 ├── run_pipeline_pbs.sh                # PBS cluster batch script
 ├── run_pipeline_mac.sh                # Local convenience wrapper
 ├── initial_sequences.fasta            # Example initial sequences
+├── configs/                           # Configuration files
+│   ├── pipelines/                     # Pipeline YAML configs
+│   ├── energy/                        # Energy YAML configs
+│   └── sequences/                     # Initial FASTA sequences
 └── model_checkpoints/                 # ProFam model weights (user-downloaded)
 ```
 
