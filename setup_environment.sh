@@ -67,6 +67,11 @@ echo "Python version: $(python --version)"
 #    matplotlib.  The [local] extra adds transformers>=4.49.0.
 # -------------------------------------------------------------------------
 echo ""
+echo "Pre-installing numpy and biotite from wheels (avoids source builds on old GCC)..."
+pip install "numpy>=2.2,<2.5" --only-binary=numpy
+pip install "biotite>=1.0.1" --only-binary=biotite
+
+echo ""
 echo "Installing BAGEL (biobagel) from GitHub..."
 pip install "biobagel[local] @ git+https://github.com/JudeWells/bagel.git"
 # Pin transformers to 4.x — the 5.x series introduces MoE config attributes
@@ -148,7 +153,9 @@ echo "Installing pipeline utilities..."
 pip install \
   "pyyaml" \
   "modal" \
-  "boltz"
+  "boltz" \
+  "optuna" \
+  "wandb"
 
 # -------------------------------------------------------------------------
 # 7. Verify key imports work
