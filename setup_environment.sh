@@ -22,6 +22,14 @@
 
 set -euo pipefail
 
+# Use a modern GCC if the system default is too old (< 9.3).
+# numpy/scipy/biotite source builds require GCC >= 9.3.
+if [[ -d /share/apps/gcc-9.2.0 ]]; then
+  export PATH="/share/apps/gcc-9.2.0/bin:${PATH}"
+  export LD_LIBRARY_PATH="/share/apps/gcc-9.2.0/lib64:${LD_LIBRARY_PATH:-}"
+  echo "Using GCC from /share/apps/gcc-9.2.0: $(gcc --version | head -1)"
+fi
+
 ENV_NAME="profam_bagel"
 PYTHON_VERSION="3.11"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,11 +74,6 @@ echo "Python version: $(python --version)"
 #    which constrains torch, plus biotite, numpy>=2.2, pandas, pydantic,
 #    matplotlib.  The [local] extra adds transformers>=4.49.0.
 # -------------------------------------------------------------------------
-echo ""
-echo "Pre-installing numpy and biotite from wheels (avoids source builds on old GCC)..."
-pip install "numpy>=2.2,<2.5" --only-binary=numpy
-pip install "biotite>=1.0.1" --only-binary=biotite
-
 echo ""
 echo "Installing BAGEL (biobagel) from GitHub..."
 pip install "biobagel[local] @ git+https://github.com/JudeWells/bagel.git"
