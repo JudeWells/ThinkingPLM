@@ -16,3 +16,4 @@ logs/
 benchmark_binding/
 ipsae_aggregation_benchmark/
 .claude/
+wandb/

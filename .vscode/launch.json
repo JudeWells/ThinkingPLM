@@ -50,6 +50,20 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             // "python": "/home/judewells/miniconda3/envs/profam_bagel/bin/python"
+        },
+        {
+            "name": "GRPO + LIS Hairpin (local debug)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_profam_bagel_pipeline.py",
+            "args": ["--config", "configs/pipelines/pipeline_grpo_lis_hairpin.yaml"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "/home/judewells/miniconda3/envs/profam_bagel/bin/python",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"
+            },
+            "justMyCode": false
         }
     ]
 }

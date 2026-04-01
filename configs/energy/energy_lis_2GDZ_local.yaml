@@ -1,9 +1,7 @@
-## Example energy configuration: LISEnergy (multi-chain binding)
+## Energy configuration: ESMFold (local GPU) + LIS scoring
 ##
-## This config folds the generated sequence together with a fixed target chain
-## and computes the LIS (Local Interaction Score) between them.
-##
-## See README sections 3.5 and 3.7 for full documentation.
+## Same as example_energy_lis_2GDZ.yaml but runs ESMFold locally.
+## Requires ~3GB GPU memory for ESMFold alongside ProFam (~1GB).
 
 folding_oracle:
   type: ESMFold
@@ -18,5 +16,5 @@ energies:
       intensive: true
       target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
       residues:
-        GEN: "all" #or "all" for all residues
+        GEN: "all"
         B: "all"

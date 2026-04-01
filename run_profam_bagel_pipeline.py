@@ -195,6 +195,29 @@ class PipelineConfig:
 
   boltz_ensemble_n: int = 1                # Number of Boltz predictions to average (1 = no ensembling)
 
+  # GRPO (online RL fine-tuning of ProFam)
+  grpo_enabled: bool = False
+  grpo_beta: float = 0.05
+  grpo_group_size: int = 16
+  grpo_clip_ratio: float = 0.2
+  grpo_lr: float = 1e-5
+  grpo_weight_decay: float = 0.01
+  grpo_temperature: float = 1.0
+  grpo_top_p: float = 0.95
+  grpo_max_tokens: int = 8000
+  grpo_normalize_rewards: bool = True
+  grpo_reward_baseline: str = "mean"       # "mean" | "min" | "none"
+  grpo_use_reference_model: bool = False
+  rl_every_n_cycles: int = 1
+  rl_steps_per_cycle: int = 1
+
+  # Weights & Biases logging
+  wandb_enabled: bool = False
+  wandb_project: str = "profam-bagel-pipeline"
+  wandb_entity: str | None = None
+  wandb_run_name: str | None = None    # defaults to output_dir stem
+  wandb_tags: List[str] | None = None
+
 
 def _to_path(x: Any) -> Path:
   return x if isinstance(x, Path) else Path(str(x))
@@ -292,6 +315,27 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     random_init=bool(pick("random_init", False)),
     random_init_max_residues=int(pick("random_init_max_residues", 80)),
     boltz_ensemble_n=int(pick("boltz_ensemble_n", 1)),
+    # GRPO fields
+    grpo_enabled=bool(pick("grpo_enabled", False)),
+    grpo_beta=float(pick("grpo_beta", 0.05)),
+    grpo_group_size=int(pick("grpo_group_size", 16)),
+    grpo_clip_ratio=float(pick("grpo_clip_ratio", 0.2)),
+    grpo_lr=float(pick("grpo_lr", 1e-5)),
+    grpo_weight_decay=float(pick("grpo_weight_decay", 0.01)),
+    grpo_temperature=float(pick("grpo_temperature", 1.0)),
+    grpo_top_p=float(pick("grpo_top_p", 0.95)),
+    grpo_max_tokens=int(pick("grpo_max_tokens", 8000)),
+    grpo_normalize_rewards=bool(pick("grpo_normalize_rewards", True)),
+    grpo_reward_baseline=str(pick("grpo_reward_baseline", "mean")),
+    grpo_use_reference_model=bool(pick("grpo_use_reference_model", False)),
+    rl_every_n_cycles=int(pick("rl_every_n_cycles", 1)),
+    rl_steps_per_cycle=int(pick("rl_steps_per_cycle", 1)),
+    # wandb
+    wandb_enabled=bool(pick("wandb_enabled", False)),
+    wandb_project=str(pick("wandb_project", "profam-bagel-pipeline")),
+    wandb_entity=pick("wandb_entity", None),
+    wandb_run_name=pick("wandb_run_name", None),
+    wandb_tags=pick("wandb_tags", None),
   )
 
   if cfg.boltz_ensemble_n < 1:
@@ -632,6 +676,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ),
   )
 
+  # GRPO (online RL fine-tuning).
+  p.add_argument("--grpo_enabled", type=str, default=None,
+                  help="Enable GRPO online RL fine-tuning of ProFam model weights.")
+  p.add_argument("--grpo_beta", type=float, default=None,
+                  help="KL penalty coefficient for GRPO (default: 0.05).")
+  p.add_argument("--grpo_group_size", type=int, default=None,
+                  help="Number of sequences per GRPO step (default: 16).")
+  p.add_argument("--grpo_clip_ratio", type=float, default=None,
+                  help="PPO-style clipping epsilon (default: 0.2).")
+  p.add_argument("--grpo_lr", type=float, default=None,
+                  help="Learning rate for GRPO optimizer (default: 1e-5).")
+  p.add_argument("--grpo_temperature", type=float, default=None,
+                  help="Sampling temperature during GRPO generation (default: 1.0).")
+  p.add_argument("--rl_every_n_cycles", type=int, default=None,
+                  help="Run GRPO every N pipeline cycles (default: 1).")
+  p.add_argument("--rl_steps_per_cycle", type=int, default=None,
+                  help="Gradient steps per GRPO invocation (default: 1).")
+
+  # Weights & Biases.
+  p.add_argument("--wandb_enabled", type=str, default=None,
+                  help="Enable W&B logging (default: false).")
+  p.add_argument("--wandb_project", type=str, default=None,
+                  help="W&B project name (default: profam-bagel-pipeline).")
+  p.add_argument("--wandb_entity", type=str, default=None,
+                  help="W&B entity/team name.")
+  p.add_argument("--wandb_run_name", type=str, default=None,
+                  help="W&B run name (default: output_dir stem).")
+
   return p
 
 
@@ -695,12 +767,17 @@ def run_profam_generation(
   cycle_dir: Path,
   model: Any,
   device: str,
-) -> Tuple[List[str], List[str]]:
+  capture_grpo_tokens: bool = False,
+) -> Tuple[List[str], List[str]] | Tuple[List[str], List[str], Dict[str, Any]]:
   """
   Generate sequences using ProFam's Python API.
 
   This calls the sampler directly (no subprocess), reusing the model loaded
   once by ``load_profam_model()``.
+
+  When ``capture_grpo_tokens=True``, also returns a dict with
+  ``input_ids``, ``generated_tokens``, ``old_per_token_lps``, and
+  ``old_per_token_mask`` for use in GRPO training.
   """
   # Build a ProteinDocument from the input FASTA.
   names, seqs = read_fasta(
@@ -826,7 +903,61 @@ def run_profam_generation(
   out_fasta = profam_out_dir / f"{base}_generated_{cfg.profam_sampler}.fasta"
   output_fasta(accessions, sequences, str(out_fasta))
 
-  return list(accessions), list(sequences)
+  if not capture_grpo_tokens:
+    return list(accessions), list(sequences)
+
+  # Capture GRPO token data: re-tokenize the prompt and generated sequences
+  # so that grpo_step_from_rewards can compute proper importance ratios.
+  tok = model.tokenizer
+  sep_id = tok.sep_token_id
+  pad_id = tok.pad_token_id
+
+  # Build prompt input_ids: [BOS] [doc_token] [SEP] seq1 [SEP] seq2 [SEP] ...
+  prompt_token_ids = [tok.bos_token_id, tok.convert_tokens_to_ids(doc_token)]
+  for seq in seqs:  # original prompt sequences from FASTA
+    prompt_token_ids.append(sep_id)
+    for aa in seq:
+      prompt_token_ids.append(tok.convert_tokens_to_ids(aa))
+  prompt_token_ids.append(sep_id)
+  # Truncate if needed
+  max_prompt_tokens = cfg.profam_max_tokens - max_gen_len
+  if len(prompt_token_ids) > max_prompt_tokens:
+    prompt_token_ids = prompt_token_ids[:max_prompt_tokens]
+  grpo_input_ids = torch.tensor([prompt_token_ids], device=device)
+
+  # Tokenize generated sequences as completion tokens (no SEP prefix — raw AA tokens + SEP)
+  gen_token_lists = []
+  for seq in sequences:
+    toks = []
+    for aa in seq:
+      toks.append(tok.convert_tokens_to_ids(aa))
+    toks.append(sep_id)
+    gen_token_lists.append(toks)
+
+  # Pad to same length
+  max_gen_tok_len = max(len(t) for t in gen_token_lists) if gen_token_lists else 0
+  padded_gen = [t + [pad_id] * (max_gen_tok_len - len(t)) for t in gen_token_lists]
+  generated_tokens = torch.tensor(padded_gen, dtype=torch.long)  # (G, L_gen) on CPU
+
+  # Compute old per-token log-probs under current policy (no gradients)
+  # Format: strip trailing SEP from prompt, prepend SEP to completions
+  input_ids_for_scoring = grpo_input_ids[:, :-1] if int(grpo_input_ids[0, -1].item()) == sep_id else grpo_input_ids
+  sep_prefix = torch.full((generated_tokens.shape[0], 1), sep_id, dtype=torch.long, device=device)
+  completion_ids = torch.cat([sep_prefix, generated_tokens.to(device)], dim=1).unsqueeze(0)  # (1, G, 1+L_gen)
+
+  with torch.no_grad():
+    old_per_token_lps, old_per_token_mask = model._compute_per_token_log_probs_for_grpo(
+      input_ids=input_ids_for_scoring,
+      completion_ids=completion_ids,
+    )
+
+  grpo_data = {
+    "input_ids": grpo_input_ids,           # (1, L_prompt)
+    "generated_tokens": generated_tokens,  # (G, L_gen) on CPU
+    "old_per_token_lps": old_per_token_lps.cpu(),   # (G, L_completion-1)
+    "old_per_token_mask": old_per_token_mask.cpu(),  # (G, L_completion-1)
+  }
+  return list(accessions), list(sequences), grpo_data
 
 
 # ---------------------------------------------------------------------------
@@ -1074,10 +1205,13 @@ def build_folding_oracle(energy_cfg: Dict[str, Any], force_modal: bool = False) 
   elif oracle_type == "Boltz":
     # Boltz runs locally via CLI subprocess
     return Boltz(**kwargs)
+  elif oracle_type == "ColabFold":
+    from pipeline.colabfold_oracle import ColabFold
+    return ColabFold(**kwargs)
   else:
     raise ValueError(
       f"Unsupported folding oracle type: {oracle_type!r}. "
-      f"Use 'ESMFold', 'AlphaFast', or 'Boltz'."
+      f"Use 'ESMFold', 'AlphaFast', 'Boltz', or 'ColabFold'."
     )
 
 
@@ -1855,7 +1989,9 @@ def run_pipeline(
   cfg: PipelineConfig,
   force_modal_folding: bool = False,
   checkpoint_callback: Any = None,
-) -> None:
+  shared_model: Any = None,
+  shared_device: str | None = None,
+) -> Dict[str, Any]:
   cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
   # Save all pipeline settings to the output folder for reproducibility.
@@ -1865,14 +2001,39 @@ def run_pipeline(
     json.dump(config_snapshot, f, indent=2)
   print(f"Config saved to {config_path}")
 
+  # Initialize Weights & Biases logging (optional).
+  wandb_run = None
+  if cfg.wandb_enabled:
+    try:
+      import wandb
+      run_name = cfg.wandb_run_name or cfg.output_dir.name
+      wandb_run = wandb.init(
+        project=cfg.wandb_project,
+        entity=cfg.wandb_entity,
+        name=run_name,
+        tags=cfg.wandb_tags,
+        config=config_snapshot,
+        dir=str(cfg.output_dir),
+        reinit=True,
+      )
+      print(f"W&B run: {wandb_run.url}")
+    except Exception as e:
+      print(f"Warning: wandb init failed ({e}), continuing without wandb")
+      wandb_run = None
+
   if cfg.freeze_prompt and not cfg.reinject_initial:
     print("Warning: freeze_prompt requires reinject_initial=True. Setting it.")
     cfg.reinject_initial = True
 
   # Load ProFam model once and reuse across all cycles (skip for non-ProFam proposals).
   # When the proposal bandit is enabled, always load ProFam since it may be selected.
+  # If shared_model is provided (e.g. from HP search), reuse it instead of loading.
   profam_model, profam_device = (None, "cpu")
-  if cfg.proposal_method == "profam" or cfg.thompson_proposal_bandit:
+  if shared_model is not None:
+    profam_model = shared_model
+    profam_device = shared_device or ("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using shared ProFam model (device={profam_device})")
+  elif cfg.proposal_method == "profam" or cfg.thompson_proposal_bandit:
     profam_model, profam_device = load_profam_model(cfg)
     if cfg.thompson_proposal_bandit:
       print("Proposal bandit enabled: ProFam model loaded (may also use random_mutation)")
@@ -1882,6 +2043,34 @@ def run_pipeline(
   # Load energy configuration & instantiate BAGEL folding oracle.
   energy_cfg = load_energy_config(cfg.energy_config)
   folding_oracle = build_folding_oracle(energy_cfg, force_modal=force_modal_folding)
+
+  # GRPO online RL fine-tuning (optional)
+  grpo_step = None
+  if cfg.grpo_enabled and profam_model is not None:
+    from pipeline.grpo import GRPOConfig, PipelineGRPOStep
+    grpo_config = GRPOConfig(
+      enabled=True,
+      grpo_beta=cfg.grpo_beta,
+      grpo_group_size=cfg.grpo_group_size,
+      grpo_clip_ratio=cfg.grpo_clip_ratio,
+      grpo_lr=cfg.grpo_lr,
+      grpo_weight_decay=cfg.grpo_weight_decay,
+      grpo_temperature=cfg.grpo_temperature,
+      grpo_top_p=cfg.grpo_top_p,
+      grpo_max_tokens=cfg.grpo_max_tokens,
+      grpo_normalize_rewards=cfg.grpo_normalize_rewards,
+      grpo_reward_baseline=cfg.grpo_reward_baseline,
+      grpo_use_reference_model=cfg.grpo_use_reference_model,
+      rl_every_n_cycles=cfg.rl_every_n_cycles,
+      rl_steps_per_cycle=cfg.rl_steps_per_cycle,
+    )
+    grpo_step = PipelineGRPOStep(
+      model=profam_model,
+      config=grpo_config,
+      device=profam_device,
+    )
+    print(f"GRPO enabled: lr={cfg.grpo_lr}, group_size={cfg.grpo_group_size}, "
+          f"every {cfg.rl_every_n_cycles} cycles, {cfg.rl_steps_per_cycle} steps/cycle")
 
   # Validate Thompson reward term exists in the energy config.
   if cfg.selection_strategy == "thompson":
@@ -1930,6 +2119,17 @@ def run_pipeline(
   # Memory buffer: list of (ids, names, seqs, energies) tuples, one per past cycle.
   # At most cfg.n_memory entries are kept.
   memory_buffer: List[tuple] = []
+
+  # GRPO replay buffer: cache the last N cycles' token data + rewards
+  # for larger effective group sizes.  Each entry is a dict with keys:
+  #   generated_tokens, old_per_token_lps, old_per_token_mask, rewards
+  # The input_ids (prompt) always comes from the current cycle.
+  grpo_replay_buffer: List[Dict[str, torch.Tensor]] = []
+  GRPO_REPLAY_SIZE = 3  # number of past cycles to cache
+
+  # Adaptive temperature: raise on low diversity, pull back toward starting temp.
+  starting_temperature = cfg.profam_temperature if cfg.profam_temperature is not None else 0.8
+  current_temperature = starting_temperature
 
   # Anti-regression state: elitism + conditional swap.
   elite_seq: str | None = None
@@ -2226,14 +2426,22 @@ def run_pipeline(
           max_mutations=cfg.max_mutations,
           rng=rng,
         )
+        grpo_token_data = None  # no token data for random mutation
       else:
-        gen_names, gen_seqs = run_profam_generation(
+        _grpo_active = (grpo_step is not None and grpo_step.should_run(cycle))
+        gen_result = run_profam_generation(
           cfg=cfg,
           input_fasta=profam_input_fasta,
           cycle_dir=cycle_dir,
           model=profam_model,
           device=profam_device,
+          capture_grpo_tokens=_grpo_active,
         )
+        if _grpo_active:
+          gen_names, gen_seqs, grpo_token_data = gen_result
+        else:
+          gen_names, gen_seqs = gen_result
+          grpo_token_data = None
       if len(gen_seqs) != cfg.profam_num_samples:
         print(
           f"Warning: expected {cfg.profam_num_samples} generated sequences, "
@@ -2364,6 +2572,143 @@ def run_pipeline(
       elite_name = gen_names[cycle_best_idx]
       elite_cycle = cycle
       print(f"  New global elite: energy={elite_energy:.4f} (cycle {elite_cycle})")
+
+    # ---- GRPO online RL step (optional, same-batch dual use) ----
+    # True GRPO with PPO clipping.  Merges the current cycle's scored batch
+    # with up to GRPO_REPLAY_SIZE cached past cycles for a larger effective
+    # group size (e.g. 8 seqs/cycle × 4 = 32 effective group).  Older data
+    # is slightly off-policy but PPO clipping handles this naturally.
+    rl_metrics = None
+    if grpo_step is not None and grpo_step.should_run(cycle) and grpo_token_data is None:
+      print(f"  GRPO skipped: no token data (proposal_method={cycle_proposal_method})")
+    if grpo_step is not None and grpo_step.should_run(cycle) and grpo_token_data is not None:
+      # Convert current cycle's energies to rewards
+      rewards_np = np.array([-e if np.isfinite(e) else 0.0 for e in energies], dtype=np.float32)
+      current_rewards = torch.tensor(rewards_np, device=profam_device)
+
+      # Save current cycle to replay buffer
+      current_entry = {
+        "generated_tokens": grpo_token_data["generated_tokens"],      # (G, L) CPU
+        "old_per_token_lps": grpo_token_data["old_per_token_lps"],    # (G, L-1) CPU
+        "old_per_token_mask": grpo_token_data["old_per_token_mask"],  # (G, L-1) CPU
+        "rewards": current_rewards.cpu(),                              # (G,) CPU
+      }
+      grpo_replay_buffer.append(current_entry)
+      if len(grpo_replay_buffer) > GRPO_REPLAY_SIZE + 1:  # +1 for current
+        grpo_replay_buffer.pop(0)
+
+      # Merge all cached entries: pad to same token length, concatenate
+      all_gen_tokens = []
+      all_old_lps = []
+      all_old_masks = []
+      all_rewards = []
+      for entry in grpo_replay_buffer:
+        all_gen_tokens.append(entry["generated_tokens"])
+        all_old_lps.append(entry["old_per_token_lps"])
+        all_old_masks.append(entry["old_per_token_mask"])
+        all_rewards.append(entry["rewards"])
+
+      # Pad token tensors to the max length across all cached cycles
+      max_gen_len = max(t.shape[1] for t in all_gen_tokens)
+      max_lp_len = max(t.shape[1] for t in all_old_lps)
+      pad_id = profam_model.tokenizer.pad_token_id
+
+      padded_tokens = []
+      padded_lps = []
+      padded_masks = []
+      for tokens, lps, masks in zip(all_gen_tokens, all_old_lps, all_old_masks):
+        if tokens.shape[1] < max_gen_len:
+          tokens = torch.nn.functional.pad(tokens, (0, max_gen_len - tokens.shape[1]), value=pad_id)
+        if lps.shape[1] < max_lp_len:
+          lps = torch.nn.functional.pad(lps, (0, max_lp_len - lps.shape[1]), value=0.0)
+          masks = torch.nn.functional.pad(masks, (0, max_lp_len - masks.shape[1]), value=False)
+        padded_tokens.append(tokens)
+        padded_lps.append(lps)
+        padded_masks.append(masks)
+
+      merged_tokens = torch.cat(padded_tokens, dim=0)   # (total_G, L)
+      merged_lps = torch.cat(padded_lps, dim=0)         # (total_G, L-1)
+      merged_masks = torch.cat(padded_masks, dim=0)     # (total_G, L-1)
+      merged_rewards = torch.cat(all_rewards, dim=0).to(profam_device)  # (total_G,)
+
+      n_total = merged_tokens.shape[0]
+      n_current = current_rewards.shape[0]
+      n_cached = n_total - n_current
+
+      if n_total >= 2:
+        profam_model.train()
+        for rl_step_i in range(cfg.rl_steps_per_cycle):
+          total_loss, rl_metrics = profam_model.grpo_step_from_rewards(
+            input_ids=grpo_token_data["input_ids"],
+            generated_tokens=merged_tokens,
+            old_per_token_lps=merged_lps,
+            old_per_token_mask=merged_masks,
+            rewards=merged_rewards,
+            clip_ratio=cfg.grpo_clip_ratio,
+            beta=cfg.grpo_beta,
+          )
+          grpo_step.optimizer.zero_grad()
+          total_loss.backward()
+          grad_norm = torch.nn.utils.clip_grad_norm_(profam_model.parameters(), 1.0)
+          grpo_step.optimizer.step()
+          rl_metrics["grad_norm"] = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else float(grad_norm)
+          rl_metrics["lr"] = grpo_step.optimizer.param_groups[0]["lr"]
+          rl_metrics["grpo_group_size"] = n_total
+          rl_metrics["grpo_cached_seqs"] = n_cached
+          print(f"  GRPO step {rl_step_i}: loss={rl_metrics['grpo_loss']:.4f}, "
+                f"clip_frac={rl_metrics['clip_fraction']:.3f}, "
+                f"grad_norm={rl_metrics['grad_norm']:.4f}, "
+                f"group={n_total} ({n_current} current + {n_cached} cached)")
+        profam_model.eval()
+      else:
+        print("  GRPO skipped: fewer than 2 sequences with finite energy")
+
+    # ---- Adaptive temperature: adjust based on sequence diversity ----
+    # Only active when the Thompson temperature bandit is not controlling temperature.
+    unique_fraction = len(set(gen_seqs)) / len(gen_seqs) if gen_seqs else 0.0
+    if temp_bandit is None:
+      prev_temperature = current_temperature
+      if unique_fraction < 1.0 / 3.0:
+        current_temperature += 0.1
+        print(f"  Adaptive temp: low diversity ({unique_fraction:.2f}), "
+              f"raising temperature {prev_temperature:.2f} → {current_temperature:.2f}")
+      elif unique_fraction == 1.0 and current_temperature > starting_temperature:
+        reduction = min(current_temperature - starting_temperature, 0.05)
+        current_temperature -= reduction
+        print(f"  Adaptive temp: all unique, "
+              f"lowering temperature {prev_temperature:.2f} → {current_temperature:.2f}")
+      cfg.profam_temperature = current_temperature
+
+    # ---- Weights & Biases logging ----
+    if wandb_run is not None:
+      import wandb
+      log_dict = {
+        "cycle": cycle,
+        "energy/all_min": float(min(energies)) if energies else float("inf"),
+        "energy/all_mean": float(np.mean(energies)) if energies else float("inf"),
+        "energy/elite": elite_energy,
+        "energy/elite_cycle": elite_cycle,
+        "similarity/to_initial": avg_sim,
+        "similarity/to_prompt": avg_sim_to_prompt,
+        "generation/num_sequences": len(gen_seqs),
+        "generation/unique_fraction": unique_fraction,
+        "generation/temperature": current_temperature,
+        "generation/mean_length": float(np.mean([len(s) for s in gen_seqs])),
+      }
+      # Per-energy-term breakdown (if available)
+      if details:
+        for key in details[0].get("energy_terms", {}):
+          term_vals = [d.get("energy_terms", {}).get(key) for d in details if d.get("energy_terms")]
+          finite_vals = [v for v in term_vals if v is not None and np.isfinite(v)]
+          if finite_vals:
+            log_dict[f"energy_terms/{key}_min"] = float(min(finite_vals))
+            log_dict[f"energy_terms/{key}_mean"] = float(np.mean(finite_vals))
+      # GRPO metrics (if run this cycle)
+      if rl_metrics is not None:
+        for k, v in rl_metrics.items():
+          if isinstance(v, (int, float)) and not isinstance(v, bool):
+            log_dict[f"grpo/{k}"] = v
+      wandb.log(log_dict, step=cycle)
 
     # Build the selection pool: current cycle + up to n_memory previous cycles.
     if cfg.n_memory > 0 and memory_buffer:
@@ -2714,6 +3059,39 @@ def run_pipeline(
     log_path=cycle_log_path,
     output_dir=cfg.output_dir,
   )
+
+  # Finalize wandb: log summary plot and close run.
+  if wandb_run is not None:
+    import wandb
+    plot_path = cfg.output_dir / "energy_summary.png"
+    if plot_path.exists():
+      wandb.log({"energy_summary": wandb.Image(str(plot_path))})
+    wandb.summary["elite_energy"] = elite_energy
+    wandb.summary["elite_cycle"] = elite_cycle
+    wandb.summary["elite_seq"] = elite_seq
+    wandb.finish()
+
+  # Return results for HP search / programmatic use.
+  try:
+    with cycle_log_path.open("r") as f:
+      cycle_stats = json.load(f)
+    per_cycle_best = [
+      cycle_stats[k].get("all_min_energy", float("inf"))
+      for k in sorted(cycle_stats.keys(), key=int)
+    ]
+    best_energy = min(per_cycle_best) if per_cycle_best else float("inf")
+  except Exception:
+    per_cycle_best = []
+    best_energy = float("inf")
+
+  return {
+    "best_energy": best_energy,
+    "per_cycle_best": per_cycle_best,
+    "elite_energy": elite_energy,
+    "elite_seq": elite_seq,
+    "elite_cycle": elite_cycle,
+    "output_dir": str(cfg.output_dir),
+  }
 
 
 def _save_results_locally(

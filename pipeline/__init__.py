@@ -1,5 +1,7 @@
 """Pipeline sub-package for the ProFam + BAGEL generative design pipeline."""
 
+from pipeline.colabfold_oracle import ColabFold, ColabFoldResult
+from pipeline.grpo import GRPOConfig, PipelineGRPOStep
 from pipeline.bandits import (
     ProposalBandit,
     TemperatureBandit,
@@ -33,6 +35,10 @@ from pipeline.utils import (
 )
 
 __all__ = [
+    "ColabFold",
+    "ColabFoldResult",
+    "GRPOConfig",
+    "PipelineGRPOStep",
     "ThompsonArm",
     "ThompsonSampler",
     "TemperatureBandit",
