@@ -52,6 +52,20 @@
             // "python": "/home/judewells/miniconda3/envs/profam_bagel/bin/python"
         },
         {
+            "name": "GRPO HP Sweep (lr × beta)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_grpo_hp_sweep.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "/home/judewells/miniconda3/envs/profam_bagel/bin/python",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"
+            },
+            "justMyCode": false
+        },
+        {
             "name": "GRPO + LIS Hairpin (local debug)",
             "type": "debugpy",
             "request": "launch",

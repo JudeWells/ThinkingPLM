@@ -238,6 +238,13 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
   Merge YAML config with CLI arguments. CLI flags (if provided) override YAML.
   """
 
+  def _to_bool(val: Any) -> bool:
+    if isinstance(val, bool):
+      return val
+    if isinstance(val, str):
+      return val.lower() in ("true", "1", "yes")
+    return bool(val)
+
   def pick(name: str, default: Any = None) -> Any:
     cli_val = getattr(args, name, None)
     if cli_val is not None:
@@ -279,14 +286,14 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     output_dir=_to_path(pick("output_dir", "pipeline_outputs")),
     softmax_temperature=float(pick("softmax_temperature", 1.0)),
     random_seed=int(pick("random_seed", 42)),
-    run_on_modal=bool(pick("run_on_modal", False)),
-    enforce_template=bool(pick("enforce_template", True)),
+    run_on_modal=_to_bool(pick("run_on_modal", False)),
+    enforce_template=_to_bool(pick("enforce_template", True)),
     output_frequency=int(pick("output_frequency", 1)),
-    sample_with_reinsertion=bool(pick("sample_with_reinsertion", True)),
-    reinject_initial=bool(pick("reinject_initial", True)),
+    sample_with_reinsertion=_to_bool(pick("sample_with_reinsertion", True)),
+    reinject_initial=_to_bool(pick("reinject_initial", True)),
     n_memory=int(pick("n_memory", 0)),
-    elitism=bool(pick("elitism", False)),
-    accept_only_improvement=bool(pick("accept_only_improvement", False)),
+    elitism=_to_bool(pick("elitism", False)),
+    accept_only_improvement=_to_bool(pick("accept_only_improvement", False)),
     annealing_initial_temp=(
       None
       if pick("annealing_initial_temp", None) is None
@@ -295,7 +302,7 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     annealing_decay=float(pick("annealing_decay", 0.95)),
     proposal_method=str(pick("proposal_method", "profam")),
     max_mutations=int(pick("max_mutations", 5)),
-    freeze_prompt=bool(pick("freeze_prompt", False)),
+    freeze_prompt=_to_bool(pick("freeze_prompt", False)),
     selection_strategy=str(pick("selection_strategy", "greedy")),
     thompson_m_samples=int(pick("thompson_m_samples", 1)),
     thompson_reward_term=str(pick("thompson_reward_term", "ipSAE")),
@@ -305,18 +312,18 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
       if pick("thompson_temperature_bins", None) is None
       else [float(x) for x in pick("thompson_temperature_bins")]
     ),
-    thompson_proposal_bandit=bool(pick("thompson_proposal_bandit", False)),
+    thompson_proposal_bandit=_to_bool(pick("thompson_proposal_bandit", False)),
     proposal_bandit_prior_alpha=float(pick("proposal_bandit_prior_alpha", 2.0)),
     proposal_bandit_prior_beta=float(pick("proposal_bandit_prior_beta", 2.0)),
-    proposal_bandit_relative_reward=bool(pick("proposal_bandit_relative_reward", False)),
+    proposal_bandit_relative_reward=_to_bool(pick("proposal_bandit_relative_reward", False)),
     thompson_max_arms=int(pick("thompson_max_arms", 0)),
     thompson_max_identity=float(pick("thompson_max_identity", 0.95)),
-    deduplicate_sequences=bool(pick("deduplicate_sequences", True)),
-    random_init=bool(pick("random_init", False)),
+    deduplicate_sequences=_to_bool(pick("deduplicate_sequences", True)),
+    random_init=_to_bool(pick("random_init", False)),
     random_init_max_residues=int(pick("random_init_max_residues", 80)),
     boltz_ensemble_n=int(pick("boltz_ensemble_n", 1)),
     # GRPO fields
-    grpo_enabled=bool(pick("grpo_enabled", False)),
+    grpo_enabled=_to_bool(pick("grpo_enabled", False)),
     grpo_beta=float(pick("grpo_beta", 0.05)),
     grpo_group_size=int(pick("grpo_group_size", 16)),
     grpo_clip_ratio=float(pick("grpo_clip_ratio", 0.2)),
@@ -325,13 +332,13 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     grpo_temperature=float(pick("grpo_temperature", 1.0)),
     grpo_top_p=float(pick("grpo_top_p", 0.95)),
     grpo_max_tokens=int(pick("grpo_max_tokens", 8000)),
-    grpo_normalize_rewards=bool(pick("grpo_normalize_rewards", True)),
+    grpo_normalize_rewards=_to_bool(pick("grpo_normalize_rewards", True)),
     grpo_reward_baseline=str(pick("grpo_reward_baseline", "mean")),
-    grpo_use_reference_model=bool(pick("grpo_use_reference_model", False)),
+    grpo_use_reference_model=_to_bool(pick("grpo_use_reference_model", False)),
     rl_every_n_cycles=int(pick("rl_every_n_cycles", 1)),
     rl_steps_per_cycle=int(pick("rl_steps_per_cycle", 1)),
     # wandb
-    wandb_enabled=bool(pick("wandb_enabled", False)),
+    wandb_enabled=_to_bool(pick("wandb_enabled", False)),
     wandb_project=str(pick("wandb_project", "profam-bagel-pipeline")),
     wandb_entity=pick("wandb_entity", None),
     wandb_run_name=pick("wandb_run_name", None),
