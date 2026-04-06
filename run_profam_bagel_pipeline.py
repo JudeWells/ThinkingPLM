@@ -210,6 +210,12 @@ class PipelineConfig:
   grpo_use_reference_model: bool = False
   rl_every_n_cycles: int = 1
   rl_steps_per_cycle: int = 1
+  grpo_replay_cycles: int = 7    # number of past cycles cached for larger effective group
+  grpo_micro_batch_size: int = 4  # sequences per micro-batch for gradient accumulation
+
+  # Likelihood tracking: evaluate model log-likelihood of best/worst sequences
+  likelihood_eval_every: int = 0    # evaluate every N cycles (0 = disabled)
+  likelihood_track_n: int = 10      # number of best/worst sequences to track
 
   # Weights & Biases logging
   wandb_enabled: bool = False
@@ -337,6 +343,10 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     grpo_use_reference_model=_to_bool(pick("grpo_use_reference_model", False)),
     rl_every_n_cycles=int(pick("rl_every_n_cycles", 1)),
     rl_steps_per_cycle=int(pick("rl_steps_per_cycle", 1)),
+    grpo_replay_cycles=int(pick("grpo_replay_cycles", 7)),
+    grpo_micro_batch_size=int(pick("grpo_micro_batch_size", 4)),
+    likelihood_eval_every=int(pick("likelihood_eval_every", 0)),
+    likelihood_track_n=int(pick("likelihood_track_n", 10)),
     # wandb
     wandb_enabled=_to_bool(pick("wandb_enabled", False)),
     wandb_project=str(pick("wandb_project", "profam-bagel-pipeline")),
@@ -1202,10 +1212,13 @@ def build_folding_oracle(energy_cfg: Dict[str, Any], force_modal: bool = False) 
     raise ValueError("folding_oracle.kwargs must be a dictionary.")
   if oracle_type == "ESMFold":
     if force_modal:
-      # Override to make sure the folding oracle itself uses Modal,
-      # regardless of what is specified in the energy config.
       kwargs["use_modal"] = True
     return ESMFold(**kwargs)
+  elif oracle_type == "BatchedESMFold":
+    if force_modal:
+      kwargs["use_modal"] = True
+    from pipeline.batched_esmfold import BatchedESMFold
+    return BatchedESMFold(**kwargs)
   elif oracle_type == "AlphaFast":
     # AlphaFast always runs on Modal — force_modal is implicit
     return AlphaFast(**kwargs)
@@ -2076,8 +2089,18 @@ def run_pipeline(
       config=grpo_config,
       device=profam_device,
     )
+    # Encoder-decoder split: frozen encoder computes prompt KV cache,
+    # trainable decoder processes completions and receives GRPO updates.
+    profam_model.init_encoder_decoder_grpo()
     print(f"GRPO enabled: lr={cfg.grpo_lr}, group_size={cfg.grpo_group_size}, "
           f"every {cfg.rl_every_n_cycles} cycles, {cfg.rl_steps_per_cycle} steps/cycle")
+    print("  Encoder-decoder mode: frozen encoder for prompt, trainable decoder for completions")
+
+  # ── Likelihood tracking: best/worst sequences ──────────────────────
+  # Each entry: (energy, sequence, prompt_input_ids)
+  # Sorted so best[0] has the lowest (best) energy, worst[0] the highest.
+  likelihood_best: List[Tuple[float, str, torch.Tensor]] = []
+  likelihood_worst: List[Tuple[float, str, torch.Tensor]] = []
 
   # Validate Thompson reward term exists in the energy config.
   if cfg.selection_strategy == "thompson":
@@ -2127,12 +2150,13 @@ def run_pipeline(
   # At most cfg.n_memory entries are kept.
   memory_buffer: List[tuple] = []
 
+  temp_bandit: TemperatureBandit | None = None
+
   # GRPO replay buffer: cache the last N cycles' token data + rewards
   # for larger effective group sizes.  Each entry is a dict with keys:
   #   generated_tokens, old_per_token_lps, old_per_token_mask, rewards
   # The input_ids (prompt) always comes from the current cycle.
   grpo_replay_buffer: List[Dict[str, torch.Tensor]] = []
-  GRPO_REPLAY_SIZE = 3  # number of past cycles to cache
 
   # Adaptive temperature: raise on low diversity, pull back toward starting temp.
   starting_temperature = cfg.profam_temperature if cfg.profam_temperature is not None else 0.8
@@ -2410,6 +2434,7 @@ def run_pipeline(
         print(f"    T={t:.2f}: α={t_info['alpha']:.2f}, β={t_info['beta_param']:.2f}, "
               f"E[θ]={t_info['expected_reward']:.3f}, selected {t_info['times_selected']}x")
 
+
     # Proposal bandit: sample which proposal method to use this cycle.
     cycle_proposal_method: str = cfg.proposal_method
     if proposal_bandit is not None:
@@ -2454,6 +2479,46 @@ def run_pipeline(
           f"Warning: expected {cfg.profam_num_samples} generated sequences, "
           f"got {len(gen_seqs)}."
         )
+
+      # Ensure all sequences in the batch are unique (within the batch).
+      # If there are intra-batch duplicates, regenerate replacements up to 3 times.
+      if cycle_proposal_method == "profam" and len(gen_seqs) > len(set(gen_seqs)):
+        unique_seqs_set = set()
+        keep_idx = []
+        for i, s in enumerate(gen_seqs):
+          if s not in unique_seqs_set:
+            unique_seqs_set.add(s)
+            keep_idx.append(i)
+        n_need = len(gen_seqs) - len(keep_idx)
+        print(f"  Intra-batch dedup: {len(keep_idx)} unique, {n_need} duplicates — regenerating extras")
+        for resample_attempt in range(3):
+          if n_need <= 0:
+            break
+          extra_result = run_profam_generation(
+            cfg=cfg, input_fasta=profam_input_fasta, cycle_dir=cycle_dir,
+            model=profam_model, device=profam_device,
+            capture_grpo_tokens=False,
+          )
+          extra_names, extra_seqs = extra_result[0], extra_result[1]
+          for j, s in enumerate(extra_seqs):
+            if s not in unique_seqs_set and n_need > 0:
+              unique_seqs_set.add(s)
+              keep_idx.append(len(gen_seqs))  # placeholder
+              gen_names.append(extra_names[j])
+              gen_seqs.append(s)
+              n_need -= 1
+        # Trim back to original batch size (keep first N unique)
+        seen_in_batch = set()
+        final_names, final_seqs = [], []
+        for n, s in zip(gen_names, gen_seqs):
+          if s not in seen_in_batch and len(final_seqs) < cfg.profam_num_samples:
+            seen_in_batch.add(s)
+            final_names.append(n)
+            final_seqs.append(s)
+        gen_names, gen_seqs = final_names, final_seqs
+        # Note: grpo_token_data may now be stale (extra seqs not captured).
+        # The GRPO step will use whatever tokens were captured for the original batch.
+        # Extra sequences will still be scored and used for prompt optimization.
 
       # Deduplication: check if all generated sequences have been seen before.
       if cfg.deduplicate_sequences:
@@ -2580,6 +2645,70 @@ def run_pipeline(
       elite_cycle = cycle
       print(f"  New global elite: energy={elite_energy:.4f} (cycle {elite_cycle})")
 
+    # ---- Likelihood tracking: update best/worst sequence pools ----
+    if cfg.likelihood_eval_every > 0 and grpo_token_data is not None:
+      track_n = cfg.likelihood_track_n
+      prompt_ids = grpo_token_data["input_ids"].cpu()  # (1, L_prompt)
+      for i, (seq, energy) in enumerate(zip(gen_seqs, energies)):
+        if not np.isfinite(energy):
+          continue
+        entry = (energy, seq, prompt_ids.clone())
+        # Update best (lowest energy)
+        likelihood_best.append(entry)
+        likelihood_best.sort(key=lambda x: x[0])
+        if len(likelihood_best) > track_n:
+          likelihood_best = likelihood_best[:track_n]
+        # Update worst (highest energy)
+        likelihood_worst.append(entry)
+        likelihood_worst.sort(key=lambda x: x[0], reverse=True)
+        if len(likelihood_worst) > track_n:
+          likelihood_worst = likelihood_worst[:track_n]
+
+      # Every N cycles, evaluate model likelihoods of best/worst sequences
+      if cycle > 0 and cycle % cfg.likelihood_eval_every == 0 and profam_model is not None:
+        profam_model.eval()
+        tok = profam_model.tokenizer
+        sep_id = tok.sep_token_id
+        pad_id = tok.pad_token_id
+
+        def _compute_avg_ll(entries):
+          """Compute average model log-likelihood for a list of (energy, seq, prompt_ids)."""
+          if not entries:
+            return float("nan")
+          all_lls = []
+          for _, seq, p_ids in entries:
+            seq_token_ids = [tok.convert_tokens_to_ids(aa) for aa in seq]
+            seq_tensor = torch.tensor([seq_token_ids], device=profam_device)
+            sep_col = torch.full((1, 1), sep_id, device=profam_device)
+            comp_ids = torch.cat([sep_col, seq_tensor], dim=1).unsqueeze(0)  # (1, 1, L+1)
+            with torch.no_grad():
+              lps, mask = profam_model._compute_per_token_log_probs_for_grpo(
+                input_ids=p_ids.to(profam_device),
+                completion_ids=comp_ids,
+              )
+            valid_lps = lps[mask]
+            if valid_lps.numel() > 0:
+              all_lls.append(valid_lps.mean().item())
+          return float(np.mean(all_lls)) if all_lls else float("nan")
+
+        ll_best = _compute_avg_ll(likelihood_best)
+        ll_worst = _compute_avg_ll(likelihood_worst)
+        n_best = len(likelihood_best)
+        n_worst = len(likelihood_worst)
+        avg_e_best = np.mean([e for e, _, _ in likelihood_best]) if likelihood_best else float("nan")
+        avg_e_worst = np.mean([e for e, _, _ in likelihood_worst]) if likelihood_worst else float("nan")
+        print(f"  Likelihood eval: best({n_best}) avg_ll={ll_best:.4f} avg_e={avg_e_best:.4f} | "
+              f"worst({n_worst}) avg_ll={ll_worst:.4f} avg_e={avg_e_worst:.4f}")
+        if wandb_run is not None:
+          import wandb
+          wandb.log({
+            "likelihood/best_avg_ll": ll_best,
+            "likelihood/worst_avg_ll": ll_worst,
+            "likelihood/best_avg_energy": avg_e_best,
+            "likelihood/worst_avg_energy": avg_e_worst,
+            "likelihood/ll_gap": ll_best - ll_worst,
+          }, step=cycle)
+
     # ---- GRPO online RL step (optional, same-batch dual use) ----
     # True GRPO with PPO clipping.  Merges the current cycle's scored batch
     # with up to GRPO_REPLAY_SIZE cached past cycles for a larger effective
@@ -2593,15 +2722,22 @@ def run_pipeline(
       rewards_np = np.array([-e if np.isfinite(e) else 0.0 for e in energies], dtype=np.float32)
       current_rewards = torch.tensor(rewards_np, device=profam_device)
 
-      # Save current cycle to replay buffer
+      # Save current cycle to replay buffer.
+      # Ensure token data and rewards have matching batch sizes — they can
+      # diverge if template enforcement or dedup changes the sequence count.
+      n_gen = grpo_token_data["generated_tokens"].shape[0]
+      n_rew = current_rewards.shape[0]
+      n_keep = min(n_gen, n_rew)
       current_entry = {
-        "generated_tokens": grpo_token_data["generated_tokens"],      # (G, L) CPU
-        "old_per_token_lps": grpo_token_data["old_per_token_lps"],    # (G, L-1) CPU
-        "old_per_token_mask": grpo_token_data["old_per_token_mask"],  # (G, L-1) CPU
-        "rewards": current_rewards.cpu(),                              # (G,) CPU
+        "generated_tokens": grpo_token_data["generated_tokens"][:n_keep],      # (G, L) CPU
+        "old_per_token_lps": grpo_token_data["old_per_token_lps"][:n_keep],    # (G, L-1) CPU
+        "old_per_token_mask": grpo_token_data["old_per_token_mask"][:n_keep],  # (G, L-1) CPU
+        "rewards": current_rewards[:n_keep].cpu(),                              # (G,) CPU
       }
+      if n_gen != n_rew:
+        print(f"  GRPO: trimmed batch {n_gen} tokens vs {n_rew} rewards -> {n_keep}")
       grpo_replay_buffer.append(current_entry)
-      if len(grpo_replay_buffer) > GRPO_REPLAY_SIZE + 1:  # +1 for current
+      if len(grpo_replay_buffer) > cfg.grpo_replay_cycles + 1:  # +1 for current
         grpo_replay_buffer.pop(0)
 
       # Merge all cached entries: pad to same token length, concatenate
@@ -2644,38 +2780,75 @@ def run_pipeline(
 
       if n_total >= 2:
         profam_model.train()
+        mbs = cfg.grpo_micro_batch_size
+        n_micro = (n_total + mbs - 1) // mbs  # ceiling division
+
+        # Verify shapes match across merged tensors before GRPO
+        assert merged_tokens.shape[0] == merged_rewards.shape[0], (
+          f"GRPO shape mismatch: tokens {merged_tokens.shape[0]} vs rewards {merged_rewards.shape[0]}"
+        )
+        # Pre-compute advantages over the full group so micro-batches
+        # use consistent normalisation.
+        full_advantages = profam_model._compute_grpo_advantages(merged_rewards.to(profam_device))
+
         for rl_step_i in range(cfg.rl_steps_per_cycle):
-          total_loss, rl_metrics = profam_model.grpo_step_from_rewards(
-            input_ids=grpo_token_data["input_ids"],
-            generated_tokens=merged_tokens,
-            old_per_token_lps=merged_lps,
-            old_per_token_mask=merged_masks,
-            rewards=merged_rewards,
-            clip_ratio=cfg.grpo_clip_ratio,
-            beta=cfg.grpo_beta,
-          )
           grpo_step.optimizer.zero_grad()
-          total_loss.backward()
+          accum_metrics: Dict[str, float] = {}
+          for mb_i in range(n_micro):
+            mb_start = mb_i * mbs
+            mb_end = min(mb_start + mbs, n_total)
+            mb_tokens = merged_tokens[mb_start:mb_end]
+            mb_lps = merged_lps[mb_start:mb_end]
+            mb_masks = merged_masks[mb_start:mb_end]
+            # Pass pre-computed advantages as "rewards" with normalisation
+            # disabled so they pass through _compute_grpo_advantages unchanged.
+            mb_advantages = full_advantages[mb_start:mb_end]
+            orig_normalize = profam_model.grpo_normalize_rewards
+            orig_baseline = profam_model.grpo_reward_baseline
+            profam_model.grpo_normalize_rewards = False
+            profam_model.grpo_reward_baseline = "none"
+            mb_loss, mb_metrics = profam_model.grpo_step_from_rewards(
+              input_ids=grpo_token_data["input_ids"],
+              generated_tokens=mb_tokens,
+              old_per_token_lps=mb_lps,
+              old_per_token_mask=mb_masks,
+              rewards=mb_advantages,
+              clip_ratio=cfg.grpo_clip_ratio,
+              beta=cfg.grpo_beta,
+            )
+            profam_model.grpo_normalize_rewards = orig_normalize
+            profam_model.grpo_reward_baseline = orig_baseline
+            # Scale loss by micro-batch fraction for correct gradient averaging
+            scaled_loss = mb_loss * (mb_end - mb_start) / n_total
+            scaled_loss.backward()
+            # Accumulate metrics (weighted average)
+            weight = (mb_end - mb_start) / n_total
+            for k, v in mb_metrics.items():
+              if isinstance(v, (int, float)):
+                accum_metrics[k] = accum_metrics.get(k, 0.0) + v * weight
+          rl_metrics = accum_metrics
           grad_norm = torch.nn.utils.clip_grad_norm_(profam_model.parameters(), 1.0)
           grpo_step.optimizer.step()
           rl_metrics["grad_norm"] = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else float(grad_norm)
           rl_metrics["lr"] = grpo_step.optimizer.param_groups[0]["lr"]
           rl_metrics["grpo_group_size"] = n_total
           rl_metrics["grpo_cached_seqs"] = n_cached
-          print(f"  GRPO step {rl_step_i}: loss={rl_metrics['grpo_loss']:.4f}, "
-                f"clip_frac={rl_metrics['clip_fraction']:.3f}, "
+          print(f"  GRPO step {rl_step_i}: loss={rl_metrics.get('grpo_loss', 0):.4f}, "
+                f"clip_frac={rl_metrics.get('clip_fraction', 0):.3f}, "
                 f"grad_norm={rl_metrics['grad_norm']:.4f}, "
-                f"group={n_total} ({n_current} current + {n_cached} cached)")
+                f"group={n_total} ({n_current} current + {n_cached} cached, "
+                f"{n_micro} micro-batches of {mbs})")
         profam_model.eval()
       else:
         print("  GRPO skipped: fewer than 2 sequences with finite energy")
 
-    # ---- Adaptive temperature: adjust based on sequence diversity ----
-    # Only active when the Thompson temperature bandit is not controlling temperature.
+    # ---- Temperature adjustment ----
     unique_fraction = len(set(gen_seqs)) / len(gen_seqs) if gen_seqs else 0.0
+
     if temp_bandit is None:
+      # Adaptive heuristic: raise on low diversity, lower toward starting temp
       prev_temperature = current_temperature
-      if unique_fraction < 1.0 / 3.0:
+      if unique_fraction < 2.0 / 3.0:
         current_temperature += 0.1
         print(f"  Adaptive temp: low diversity ({unique_fraction:.2f}), "
               f"raising temperature {prev_temperature:.2f} → {current_temperature:.2f}")
@@ -2699,7 +2872,7 @@ def run_pipeline(
         "similarity/to_prompt": avg_sim_to_prompt,
         "generation/num_sequences": len(gen_seqs),
         "generation/unique_fraction": unique_fraction,
-        "generation/temperature": current_temperature,
+        "generation/temperature": cycle_temperature if cycle_temperature is not None else current_temperature,
         "generation/mean_length": float(np.mean([len(s) for s in gen_seqs])),
       }
       # Per-energy-term breakdown (if available)

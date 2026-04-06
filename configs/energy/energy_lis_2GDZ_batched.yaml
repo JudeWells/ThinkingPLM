@@ -1,7 +1,7 @@
-## Energy configuration: ESMFold (local GPU) + LIS scoring
+## Energy configuration: BatchedESMFold (local GPU) + LIS scoring
 ##
-## Same as example_energy_lis_2GDZ.yaml but runs ESMFold locally.
-## Requires ~3GB GPU memory for ESMFold alongside ProFam (~1GB).
+## Same as energy_lis_2GDZ_local.yaml but uses BatchedESMFold for
+## ~5-8x faster folding by processing all sequences in one forward pass.
 
 folding_oracle:
   type: BatchedESMFold

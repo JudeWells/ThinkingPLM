@@ -67,7 +67,7 @@ class PipelineGRPOStep:
         self.device = device
 
         self.optimizer = torch.optim.AdamW(
-            model.parameters(),
+            [p for p in model.parameters() if p.requires_grad],
             lr=config.grpo_lr,
             weight_decay=config.grpo_weight_decay,
         )
