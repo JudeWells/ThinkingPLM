@@ -217,6 +217,15 @@ class PipelineConfig:
   likelihood_eval_every: int = 0    # evaluate every N cycles (0 = disabled)
   likelihood_track_n: int = 10      # number of best/worst sequences to track
 
+  # Bradley-Terry ranking loss (alternative to GRPO)
+  bt_enabled: bool = False
+  bt_lr: float = 1e-5
+  bt_pool_size: int = 64            # max sequences in the ranking pool
+  bt_batch_size: int = 32           # sequences per BT training batch
+  bt_sub_batch_size: int = 4        # sub-batch for forward pass (memory)
+  bt_every_n_cycles: int = 1        # train every N cycles
+  bt_steps_per_cycle: int = 1       # gradient steps per training invocation
+
   # Weights & Biases logging
   wandb_enabled: bool = False
   wandb_project: str = "profam-bagel-pipeline"
@@ -347,6 +356,13 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     grpo_micro_batch_size=int(pick("grpo_micro_batch_size", 4)),
     likelihood_eval_every=int(pick("likelihood_eval_every", 0)),
     likelihood_track_n=int(pick("likelihood_track_n", 10)),
+    bt_enabled=_to_bool(pick("bt_enabled", False)),
+    bt_lr=float(pick("bt_lr", 1e-5)),
+    bt_pool_size=int(pick("bt_pool_size", 64)),
+    bt_batch_size=int(pick("bt_batch_size", 32)),
+    bt_sub_batch_size=int(pick("bt_sub_batch_size", 4)),
+    bt_every_n_cycles=int(pick("bt_every_n_cycles", 1)),
+    bt_steps_per_cycle=int(pick("bt_steps_per_cycle", 1)),
     # wandb
     wandb_enabled=_to_bool(pick("wandb_enabled", False)),
     wandb_project=str(pick("wandb_project", "profam-bagel-pipeline")),
@@ -2096,6 +2112,21 @@ def run_pipeline(
           f"every {cfg.rl_every_n_cycles} cycles, {cfg.rl_steps_per_cycle} steps/cycle")
     print("  Encoder-decoder mode: frozen encoder for prompt, trainable decoder for completions")
 
+  # ── Bradley-Terry ranking loss setup ────────────────────────────────
+  bt_optimizer = None
+  bt_pool: List[Tuple[float, str]] = []  # (energy, sequence) — maintained sorted by energy
+  if cfg.bt_enabled and profam_model is not None:
+    # Reuse the encoder-decoder split (init if not already done by GRPO)
+    if profam_model._encoder_model is None:
+      profam_model.init_encoder_decoder_grpo()
+    bt_optimizer = torch.optim.Adam(
+      [p for p in profam_model.parameters() if p.requires_grad],
+      lr=cfg.bt_lr,
+    )
+    print(f"Bradley-Terry enabled: lr={cfg.bt_lr}, pool_size={cfg.bt_pool_size}, "
+          f"batch_size={cfg.bt_batch_size}, every {cfg.bt_every_n_cycles} cycles")
+    print("  Encoder-decoder mode: frozen encoder for prompt, trainable decoder for completions")
+
   # ── Likelihood tracking: best/worst sequences ──────────────────────
   # Each entry: (energy, sequence, prompt_input_ids)
   # Sorted so best[0] has the lowest (best) energy, worst[0] the highest.
@@ -2461,15 +2492,16 @@ def run_pipeline(
         grpo_token_data = None  # no token data for random mutation
       else:
         _grpo_active = (grpo_step is not None and grpo_step.should_run(cycle))
+        _bt_active = (bt_optimizer is not None and cycle % cfg.bt_every_n_cycles == 0)
         gen_result = run_profam_generation(
           cfg=cfg,
           input_fasta=profam_input_fasta,
           cycle_dir=cycle_dir,
           model=profam_model,
           device=profam_device,
-          capture_grpo_tokens=_grpo_active,
+          capture_grpo_tokens=(_grpo_active or _bt_active),
         )
-        if _grpo_active:
+        if _grpo_active or _bt_active:
           gen_names, gen_seqs, grpo_token_data = gen_result
         else:
           gen_names, gen_seqs = gen_result
@@ -2841,6 +2873,86 @@ def run_pipeline(
         profam_model.eval()
       else:
         print("  GRPO skipped: fewer than 2 sequences with finite energy")
+
+    # ---- Bradley-Terry ranking update (optional) ----
+    if bt_optimizer is not None and cycle % cfg.bt_every_n_cycles == 0:
+      # Add current cycle's sequences to the ranking pool
+      for seq, energy in zip(gen_seqs, energies):
+        if np.isfinite(energy):
+          bt_pool.append((energy, seq))
+      # Keep pool sorted by energy and capped at pool_size
+      bt_pool.sort(key=lambda x: x[0])
+      if len(bt_pool) > cfg.bt_pool_size:
+        # Keep best half + worst half for contrast
+        half = cfg.bt_pool_size // 2
+        bt_pool = bt_pool[:half] + bt_pool[-half:]
+
+      if len(bt_pool) >= 4:  # need at least a few pairs
+        from pipeline.bradley_terry import bradley_terry_loss, score_variants_differentiable
+        tok = profam_model.tokenizer
+
+        # Compute frozen KV cache for the current prompt
+        prompt_ids = grpo_token_data["input_ids"] if grpo_token_data is not None else None
+        if prompt_ids is not None:
+          with torch.no_grad():
+            enc_out = profam_model._encoder_model(prompt_ids.to(profam_device), use_cache=True)
+          frozen_kv = tuple(
+            tuple(t.detach() for t in layer_kv) for layer_kv in enc_out.past_key_values
+          )
+
+          profam_model.train()
+          for bt_step in range(cfg.bt_steps_per_cycle):
+            # Sample a batch from the pool
+            n_sample = min(cfg.bt_batch_size, len(bt_pool))
+            indices = rng.choice(len(bt_pool), size=n_sample, replace=False)
+            batch_seqs = [bt_pool[i][1] for i in indices]
+            batch_energies = [bt_pool[i][0] for i in indices]
+
+            # Tokenize sequences: [SEP] + seq + [SEP]
+            comp_tok = tok.encode_completions(
+              batch_seqs,
+              bos_token=tok.sep_token,
+              eos_token=tok.sep_token,
+            )
+            completion_ids = (
+              torch.as_tensor(comp_tok["input_ids"], dtype=torch.long)
+              .unsqueeze(0)
+              .to(profam_device)
+            )
+
+            # Fitness = negated energy (higher = better)
+            fitness = torch.tensor(
+              [-e for e in batch_energies], dtype=torch.float32, device=profam_device
+            )
+
+            # Score with gradient flow
+            scores = score_variants_differentiable(
+              profam_model, frozen_kv, completion_ids,
+              sub_batch_size=cfg.bt_sub_batch_size,
+            )
+
+            loss = bradley_terry_loss(scores, fitness)
+            bt_optimizer.zero_grad()
+            loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+              [p for p in profam_model.parameters() if p.requires_grad], 1.0
+            )
+            bt_optimizer.step()
+
+            print(f"  BT step {bt_step}: loss={loss.item():.4f}, "
+                  f"grad_norm={grad_norm.item():.4f}, pool={len(bt_pool)}, batch={n_sample}")
+
+            if wandb_run is not None:
+              import wandb
+              wandb.log({
+                "bt/loss": loss.item(),
+                "bt/grad_norm": grad_norm.item(),
+                "bt/pool_size": len(bt_pool),
+              }, step=cycle)
+
+          profam_model.eval()
+          del frozen_kv
+          torch.cuda.empty_cache()
 
     # ---- Temperature adjustment ----
     unique_fraction = len(set(gen_seqs)) / len(gen_seqs) if gen_seqs else 0.0
