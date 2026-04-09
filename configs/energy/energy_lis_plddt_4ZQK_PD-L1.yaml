@@ -1,0 +1,26 @@
+## Energy configuration: ESMFold (local GPU) + LIS + PLDDT scoring
+##
+## Target: 4ZQK_PD-L1
+## mt2 variant: adds PLDDT (weight=0.1) to provide non-zero gradient when LIS=0
+
+folding_oracle:
+  type: BatchedESMFold
+  kwargs:
+    use_modal: false
+    max_batch_size: 16
+
+energies:
+  - type: LISEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 12.0
+      intensive: true
+      target: AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNA
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: PLDDTEnergy
+    kwargs:
+      weight: 0.1
+      residues:
+        GEN: "all"

@@ -252,44 +252,46 @@ class TemperatureBandit:
 
 
 class ProposalBandit:
-    """Thompson sampler over proposal methods (profam vs random_mutation)."""
+    """Thompson sampler over proposal methods (profam vs random_mutation).
+
+    Uses a Beta-Bernoulli model: each method's reward is the probability of
+    improving over the current best energy.  On each cycle, the selected
+    method gets α += 1 if improvement occurred, β += 1 otherwise.
+    """
 
     METHODS = ["profam", "random_mutation"]
 
     def __init__(
         self,
-        exploit_bias: float = 1.0,
-        prior_alpha: float = 2.0,
-        prior_beta: float = 2.0,
+        prior_alpha: float = 1.0,
+        prior_beta: float = 1.0,
         rng: np.random.Generator | None = None,
     ):
-        self.exploit_bias = max(1.0, exploit_bias)
         self.prior_alpha = prior_alpha
         self.prior_beta = prior_beta
         self.rng = rng if rng is not None else np.random.default_rng()
         self.alphas = {m: prior_alpha for m in self.METHODS}
         self.betas = {m: prior_beta for m in self.METHODS}
         self.times_selected: Dict[str, int] = {m: 0 for m in self.METHODS}
-        self.total_reward: Dict[str, float] = {m: 0.0 for m in self.METHODS}
 
     def select(self) -> str:
         """Thompson-sample a proposal method."""
         best_method = self.METHODS[0]
         best_theta = -1.0
-        b = self.exploit_bias
         for m in self.METHODS:
-            theta = float(self.rng.beta(self.alphas[m] * b, self.betas[m] * b))
+            theta = float(self.rng.beta(self.alphas[m], self.betas[m]))
             if theta > best_theta:
                 best_theta = theta
                 best_method = m
         self.times_selected[best_method] += 1
         return best_method
 
-    def update(self, method: str, reward: float) -> None:
-        """Update the chosen method's posterior with the observed reward."""
-        self.alphas[method] += reward
-        self.betas[method] += (1.0 - reward)
-        self.total_reward[method] += reward
+    def update(self, method: str, improved: bool) -> None:
+        """Update posterior: α += 1 if improved, β += 1 otherwise."""
+        if improved:
+            self.alphas[method] += 1
+        else:
+            self.betas[method] += 1
 
     def get_state_dict(self) -> List[Dict[str, Any]]:
         """Serialize state for JSON logging."""
@@ -302,6 +304,5 @@ class ProposalBandit:
                 "beta_param": b,
                 "expected_reward": a / (a + b),
                 "times_selected": self.times_selected[m],
-                "total_reward": self.total_reward[m],
             })
         return result

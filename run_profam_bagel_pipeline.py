@@ -29,7 +29,7 @@ profam_sampler: "single"            # or "ensemble" (optional, default: single)
 profam_num_samples: 64              # N_output
 profam_max_tokens: 8192            # optional
 profam_max_generated_length: null   # optional
-profam_temperature: 0.8             # optional
+profam_temperature: 0.7             # optional
 profam_top_p: 0.95                  # optional
 energy_config: path/to/energy.yaml
 f_inject: 0.25
@@ -189,6 +189,7 @@ class PipelineConfig:
   thompson_max_arms: int = 0              # max arms to retain (0 = unlimited); prunes to top-K diverse arms
   thompson_max_identity: float = 0.95     # max sequence identity between retained arms (diversity threshold)
   deduplicate_sequences: bool = True       # skip folding for already-seen sequences, retry generation
+  save_structures: bool = False            # save CIF/PAE/PLDDT files per cycle (disk-heavy, disable for large runs)
 
   random_init: bool = False                # if True, generate a random initial sequence instead of reading from FASTA
   random_init_max_residues: int = 80       # max length of randomly generated initial sequence
@@ -334,6 +335,7 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     thompson_max_arms=int(pick("thompson_max_arms", 0)),
     thompson_max_identity=float(pick("thompson_max_identity", 0.95)),
     deduplicate_sequences=_to_bool(pick("deduplicate_sequences", True)),
+    save_structures=_to_bool(pick("save_structures", False)),
     random_init=_to_bool(pick("random_init", False)),
     random_init_max_residues=int(pick("random_init_max_residues", 80)),
     boltz_ensemble_n=int(pick("boltz_ensemble_n", 1)),
@@ -1724,6 +1726,7 @@ def evaluate_sequences_with_bagel(
   cycle_dir: Path,
   enforce_template: bool = True,
   boltz_ensemble_n: int = 1,
+  save_structures: bool = False,
 ) -> Tuple[List[float], List[Dict[str, Any]], List[Any]]:
   """
   For each sequence, build a single-chain BAGEL System, run the required
@@ -1983,7 +1986,7 @@ def evaluate_sequences_with_bagel(
       details.append({"total_energy": float("inf"), "error": "all_ensemble_failed"})
 
   # Save structures for sequences where the folding oracle was called.
-  if any(fr is not None for fr in folding_results):
+  if save_structures and any(fr is not None for fr in folding_results):
     structures_dir = cycle_dir / f"sequences_cycle_all_{cycle_index}"
     structures_dir.mkdir(parents=True, exist_ok=True)
     for idx, fr in enumerate(folding_results):
@@ -2019,6 +2022,41 @@ def _collect_checkpoint_results(cfg: PipelineConfig) -> Dict[str, Any]:
     results["energy_plot_png"] = plot_path.read_bytes()
 
   return results
+
+
+def adjust_temperature(
+    raw_unique_fraction: float,
+    raw_novel_fraction: float,
+    avg_sim_to_prompt: float,
+    current_temperature: float,
+    starting_temperature: float,
+) -> Tuple[float, str | None]:
+  """Adaptive temperature heuristic.
+
+  Raises temperature when diversity is low (within batch, across campaign,
+  or prompt collapse). Lowers toward starting temp when diversity is healthy.
+
+  Returns (new_temperature, reason_string_or_None).
+  """
+  low_batch_diversity = raw_unique_fraction < 0.5
+  prompt_collapse = avg_sim_to_prompt >= 1.0 - 1e-5
+  low_novelty = raw_novel_fraction < 1.0 / 3.0
+
+  if low_batch_diversity or prompt_collapse or low_novelty:
+    reasons = []
+    if low_batch_diversity:
+      reasons.append(f"low batch diversity ({raw_unique_fraction:.2f})")
+    if prompt_collapse:
+      reasons.append(f"prompt collapse (sim={avg_sim_to_prompt:.3f})")
+    if low_novelty:
+      reasons.append(f"low novelty ({raw_novel_fraction:.2f})")
+    return current_temperature + 0.1, ", ".join(reasons)
+
+  if raw_unique_fraction == 1.0 and raw_novel_fraction > 0.8 and current_temperature > starting_temperature:
+    reduction = min(current_temperature - starting_temperature, 0.05)
+    return current_temperature - reduction, None
+
+  return current_temperature, None
 
 
 def run_pipeline(
@@ -2154,9 +2192,10 @@ def run_pipeline(
 
   # Read initial sequences S1 from FASTA, or generate randomly.
   if cfg.random_init:
-    _AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+    # Exclude cysteine — disulfide bonds cause ESMFold failures on random sequences
+    _AMINO_ACIDS_NO_CYS = "ADEFGHIKLMNPQRSTVWY"
     rand_len = rng.integers(cfg.random_init_max_residues // 2, cfg.random_init_max_residues + 1)
-    rand_seq = "".join(rng.choice(list(_AMINO_ACIDS), size=rand_len))
+    rand_seq = "".join(rng.choice(list(_AMINO_ACIDS_NO_CYS), size=rand_len))
     init_names = [f"random_init_len{rand_len}"]
     init_seqs = [rand_seq]
     print(f"Random init: generated sequence of length {rand_len}")
@@ -2190,7 +2229,7 @@ def run_pipeline(
   grpo_replay_buffer: List[Dict[str, torch.Tensor]] = []
 
   # Adaptive temperature: raise on low diversity, pull back toward starting temp.
-  starting_temperature = cfg.profam_temperature if cfg.profam_temperature is not None else 0.8
+  starting_temperature = cfg.profam_temperature if cfg.profam_temperature is not None else 0.7
   current_temperature = starting_temperature
 
   # Anti-regression state: elitism + conditional swap.
@@ -2222,14 +2261,12 @@ def run_pipeline(
   # With greedy: elitist prompt selection + bandit chooses proposal method.
   if cfg.thompson_proposal_bandit:
     proposal_bandit = ProposalBandit(
-      exploit_bias=cfg.thompson_exploit_bias,
       prior_alpha=cfg.proposal_bandit_prior_alpha,
       prior_beta=cfg.proposal_bandit_prior_beta,
       rng=rng,
     )
     print(f"  Proposal bandit: methods={ProposalBandit.METHODS}, "
-          f"prior=Beta({cfg.proposal_bandit_prior_alpha}, {cfg.proposal_bandit_prior_beta}), "
-          f"relative_reward={cfg.proposal_bandit_relative_reward}")
+          f"prior=Beta({cfg.proposal_bandit_prior_alpha}, {cfg.proposal_bandit_prior_beta})")
 
   # SelectionManager: unified orchestrator for Thompson sampling / greedy selection.
   # Used when selection_strategy="thompson" OR when proposal_bandit is enabled
@@ -2258,18 +2295,31 @@ def run_pipeline(
   # Evaluate initial seed sequence(s) to establish a baseline energy.
   # This ensures cycle 1 must improve over the seed to be accepted.
   if cfg.elitism or cfg.accept_only_improvement or cfg.selection_strategy == "thompson":
-    print("=== Evaluating initial seed sequence(s) ===")
-    seed_energies, seed_details, seed_folding_results = evaluate_sequences_with_bagel(
-      sequences=base_initial_seqs,
-      energy_cfg=energy_cfg,
-      folding_oracle=folding_oracle,
-      cycle_index=0,
-      cycle_dir=cfg.output_dir / "cycle_000_seed",
-      enforce_template=cfg.enforce_template,
-      boltz_ensemble_n=cfg.boltz_ensemble_n,
-    )
-    seed_best_idx = int(np.argmin(seed_energies))
-    seed_best_energy = float(seed_energies[seed_best_idx])
+    _AMINO_ACIDS_NO_CYS = "ADEFGHIKLMNPQRSTVWY"
+    max_seed_retries = 10 if cfg.random_init else 1
+    for _seed_attempt in range(max_seed_retries):
+      print(f"=== Evaluating initial seed sequence(s) (attempt {_seed_attempt + 1}) ===")
+      seed_energies, seed_details, seed_folding_results = evaluate_sequences_with_bagel(
+        sequences=base_initial_seqs,
+        energy_cfg=energy_cfg,
+        folding_oracle=folding_oracle,
+        cycle_index=0,
+        cycle_dir=cfg.output_dir / "cycle_000_seed",
+        enforce_template=cfg.enforce_template,
+        boltz_ensemble_n=cfg.boltz_ensemble_n,
+        save_structures=cfg.save_structures,
+      )
+      seed_best_idx = int(np.argmin(seed_energies))
+      seed_best_energy = float(seed_energies[seed_best_idx])
+      if seed_best_energy < float("inf") or not cfg.random_init:
+        break
+      # Folding failed on random init — regenerate and retry
+      rand_len = rng.integers(cfg.random_init_max_residues // 2, cfg.random_init_max_residues + 1)
+      rand_seq = "".join(rng.choice(list(_AMINO_ACIDS_NO_CYS), size=rand_len))
+      base_initial_seqs = [rand_seq]
+      base_initial_names = [f"random_init_len{rand_len}_retry{_seed_attempt + 1}"]
+      init_seqs = list(base_initial_seqs)
+      print(f"  Seed folding failed, regenerating random sequence (len={rand_len})")
     print(f"  Seed sequence best energy: {seed_best_energy:.4f}")
     if seed_details[seed_best_idx] and isinstance(seed_details[seed_best_idx], dict):
       terms = {k: v for k, v in seed_details[seed_best_idx].items() if k != "total_energy"}
@@ -2480,13 +2530,16 @@ def run_pipeline(
     # enforce_template=False and deduplication.
     max_generation_attempts = 5
     dedup_retries = 0
-    max_dedup_retries = 10  # cap retries to avoid infinite loops
+    # Random mutation is cheap (no GPU), so allow many more retries.
+    max_dedup_retries = 500 if cycle_proposal_method == "random_mutation" else 10
     for attempt in range(1, max_generation_attempts + max_dedup_retries + 1):
       if cycle_proposal_method == "random_mutation":
+        # Escalate max_mutations every 10 failed dedup retries to explore further
+        effective_max_mutations = cfg.max_mutations + dedup_retries // 20
         gen_names, gen_seqs = run_random_mutation_generation(
           seed_sequences=all_seqs,
           num_samples=cfg.profam_num_samples,
-          max_mutations=cfg.max_mutations,
+          max_mutations=effective_max_mutations,
           rng=rng,
         )
         grpo_token_data = None  # no token data for random mutation
@@ -2503,6 +2556,7 @@ def run_pipeline(
         )
         if _grpo_active or _bt_active:
           gen_names, gen_seqs, grpo_token_data = gen_result
+          grpo_token_data["_original_seqs"] = list(gen_seqs)  # snapshot for dedup matching
         else:
           gen_names, gen_seqs = gen_result
           grpo_token_data = None
@@ -2512,9 +2566,38 @@ def run_pipeline(
           f"got {len(gen_seqs)}."
         )
 
+      # ── Fix 1 & 4: Compute raw diversity BEFORE dedup (true model diversity) ──
+      n_raw_batch = len(gen_seqs)
+      n_unique_in_batch = len(set(gen_seqs))
+      n_seen_before = sum(1 for s in gen_seqs if s in seen_sequences) if cfg.deduplicate_sequences else 0
+      n_prompt_copies = sum(1 for s in gen_seqs if s in set(all_seqs))
+      raw_unique_fraction = n_unique_in_batch / n_raw_batch if n_raw_batch > 0 else 0.0
+      raw_novel_fraction = (n_raw_batch - n_seen_before) / n_raw_batch if n_raw_batch > 0 else 0.0
+      print(f"  Raw diversity: {n_unique_in_batch}/{n_raw_batch} unique in batch, "
+            f"{n_raw_batch - n_seen_before}/{n_raw_batch} novel, "
+            f"{n_prompt_copies} prompt copies")
+
+      # Adjust temperature inside the retry loop so we get un-stuck faster.
+      # Only relevant when using profam proposals — random_mutation ignores temperature.
+      if temp_bandit is None and cycle_proposal_method == "profam":
+        avg_sim_for_temp = compute_avg_sequence_similarity(gen_seqs, all_seqs)
+        prev_temp = current_temperature
+        current_temperature, temp_reason = adjust_temperature(
+          raw_unique_fraction, raw_novel_fraction, avg_sim_for_temp,
+          current_temperature, starting_temperature,
+        )
+        if temp_reason:
+          print(f"  Adaptive temp (in-loop): {temp_reason}, "
+                f"T {prev_temp:.2f} → {current_temperature:.2f}")
+          cfg.profam_temperature = current_temperature
+
+      # ── Fix 6: Invalidate grpo_token_data if dedup changes the batch ──
+      batch_modified = False
+
       # Ensure all sequences in the batch are unique (within the batch).
-      # If there are intra-batch duplicates, regenerate replacements up to 3 times.
-      if cycle_proposal_method == "profam" and len(gen_seqs) > len(set(gen_seqs)):
+      # When replacing duplicates, capture token data so GRPO/BT stays valid.
+      _capture_tokens = (_grpo_active or _bt_active) if cycle_proposal_method == "profam" else False
+      if cycle_proposal_method == "profam" and n_unique_in_batch < n_raw_batch:
         unique_seqs_set = set()
         keep_idx = []
         for i, s in enumerate(gen_seqs):
@@ -2523,36 +2606,96 @@ def run_pipeline(
             keep_idx.append(i)
         n_need = len(gen_seqs) - len(keep_idx)
         print(f"  Intra-batch dedup: {len(keep_idx)} unique, {n_need} duplicates — regenerating extras")
+
+        # Collect token data for replacement sequences
+        extra_token_chunks = []
         for resample_attempt in range(3):
           if n_need <= 0:
             break
           extra_result = run_profam_generation(
             cfg=cfg, input_fasta=profam_input_fasta, cycle_dir=cycle_dir,
             model=profam_model, device=profam_device,
-            capture_grpo_tokens=False,
+            capture_grpo_tokens=_capture_tokens,
           )
-          extra_names, extra_seqs = extra_result[0], extra_result[1]
+          if _capture_tokens:
+            extra_names, extra_seqs, extra_tokens = extra_result
+          else:
+            extra_names, extra_seqs = extra_result[0], extra_result[1]
+            extra_tokens = None
           for j, s in enumerate(extra_seqs):
             if s not in unique_seqs_set and n_need > 0:
               unique_seqs_set.add(s)
-              keep_idx.append(len(gen_seqs))  # placeholder
               gen_names.append(extra_names[j])
               gen_seqs.append(s)
+              if extra_tokens is not None:
+                extra_token_chunks.append({
+                  "generated_tokens": extra_tokens["generated_tokens"][j:j+1],
+                  "old_per_token_lps": extra_tokens["old_per_token_lps"][j:j+1],
+                  "old_per_token_mask": extra_tokens["old_per_token_mask"][j:j+1],
+                })
               n_need -= 1
-        # Trim back to original batch size (keep first N unique)
+
+        # Trim back to original batch size, tracking which indices survive
         seen_in_batch = set()
         final_names, final_seqs = [], []
-        for n, s in zip(gen_names, gen_seqs):
+        final_keep_orig = []  # indices into original gen_seqs (< n_raw_batch)
+        final_extra_idx = []  # indices into extra_token_chunks
+        extra_counter = 0
+        for idx, (nm, s) in enumerate(zip(gen_names, gen_seqs)):
           if s not in seen_in_batch and len(final_seqs) < cfg.profam_num_samples:
             seen_in_batch.add(s)
-            final_names.append(n)
+            final_names.append(nm)
             final_seqs.append(s)
+            if idx < n_raw_batch:
+              final_keep_orig.append(idx)
+            else:
+              final_extra_idx.append(extra_counter)
+              extra_counter += 1 if idx >= n_raw_batch else 0
         gen_names, gen_seqs = final_names, final_seqs
-        # Note: grpo_token_data may now be stale (extra seqs not captured).
-        # The GRPO step will use whatever tokens were captured for the original batch.
-        # Extra sequences will still be scored and used for prompt optimization.
 
-      # Deduplication: check if all generated sequences have been seen before.
+        # Rebuild grpo_token_data: original survivors + replacement token data
+        if grpo_token_data is not None and _capture_tokens:
+          orig_t = grpo_token_data["generated_tokens"]
+          orig_lp = grpo_token_data["old_per_token_lps"]
+          orig_m = grpo_token_data["old_per_token_mask"]
+
+          parts_t, parts_lp, parts_m = [], [], []
+          # Original survivors
+          if final_keep_orig:
+            idx_t = torch.tensor(final_keep_orig)
+            parts_t.append(orig_t[idx_t])
+            parts_lp.append(orig_lp[idx_t])
+            parts_m.append(orig_m[idx_t])
+          # Replacement sequences
+          for ei in final_extra_idx:
+            if ei < len(extra_token_chunks):
+              parts_t.append(extra_token_chunks[ei]["generated_tokens"])
+              parts_lp.append(extra_token_chunks[ei]["old_per_token_lps"])
+              parts_m.append(extra_token_chunks[ei]["old_per_token_mask"])
+
+          if parts_t:
+            # Pad to common length before concatenating
+            max_t_len = max(p.shape[1] for p in parts_t)
+            max_lp_len = max(p.shape[1] for p in parts_lp)
+            pad_id = profam_model.tokenizer.pad_token_id
+            padded_t = [torch.nn.functional.pad(p, (0, max_t_len - p.shape[1]), value=pad_id) for p in parts_t]
+            padded_lp = [torch.nn.functional.pad(p, (0, max_lp_len - p.shape[1]), value=0.0) for p in parts_lp]
+            padded_m = [torch.nn.functional.pad(p, (0, max_lp_len - p.shape[1]), value=False) for p in parts_m]
+            grpo_token_data = {
+              "input_ids": grpo_token_data["input_ids"],
+              "generated_tokens": torch.cat(padded_t, dim=0),
+              "old_per_token_lps": torch.cat(padded_lp, dim=0),
+              "old_per_token_mask": torch.cat(padded_m, dim=0),
+              "_original_seqs": list(gen_seqs),
+            }
+            print(f"  grpo_token_data rebuilt: {len(final_keep_orig)} original + "
+                  f"{len(final_extra_idx)} replacement entries")
+          batch_modified = False  # token data is now consistent
+        else:
+          batch_modified = True
+        batch_modified = True
+
+      # Deduplication against previously seen sequences.
       if cfg.deduplicate_sequences:
         novel_mask = [seq not in seen_sequences for seq in gen_seqs]
         n_novel = sum(novel_mask)
@@ -2569,18 +2712,37 @@ def run_pipeline(
                 f"all {len(gen_seqs)} sequences are duplicates, regenerating...")
           continue
         if n_novel == 0:
-          # Exhausted dedup retries — use cached results for the duplicates.
+          # ── Fix 2: Exhausted retries — mutate prompt sequences to get novel ones ──
           print(f"  Dedup: exhausted {max_dedup_retries} retries, "
-                f"using cached results for duplicate sequences")
-          energies: List[float] = []
-          details: List[Dict[str, Any]] = []
-          folding_results: List[Any] = []
-          for seq in gen_seqs:
-            cached_energy, cached_detail = seen_sequences[seq]
-            energies.append(cached_energy)
-            details.append(cached_detail)
-            folding_results.append(None)
-          break
+                f"generating novel sequences via random mutation of prompt")
+          mut_names, mut_seqs = run_random_mutation_generation(
+            seed_sequences=all_seqs,
+            num_samples=cfg.profam_num_samples,
+            max_mutations=cfg.max_mutations if cfg.max_mutations else 1,
+            rng=rng,
+          )
+          # Keep only truly novel mutations
+          novel_muts = [(nm, s) for nm, s in zip(mut_names, mut_seqs)
+                        if s not in seen_sequences and s not in set(gen_seqs)]
+          if novel_muts:
+            gen_names = [nm for nm, _ in novel_muts[:cfg.profam_num_samples]]
+            gen_seqs = [s for _, s in novel_muts[:cfg.profam_num_samples]]
+            novel_mask = [True] * len(gen_seqs)
+            n_novel = len(gen_seqs)
+            batch_modified = True
+            print(f"  Generated {len(gen_seqs)} novel mutants")
+          else:
+            # True exhaustion — use cached results
+            print(f"  Could not generate novel mutants either, using cached results")
+            energies: List[float] = []
+            details: List[Dict[str, Any]] = []
+            folding_results: List[Any] = []
+            for seq in gen_seqs:
+              cached_energy, cached_detail = seen_sequences[seq]
+              energies.append(cached_energy)
+              details.append(cached_detail)
+              folding_results.append(None)
+            break
 
         # We have at least some novel sequences. Separate novel vs cached.
         novel_seqs = [s for s, is_novel in zip(gen_seqs, novel_mask) if is_novel]
@@ -2595,6 +2757,7 @@ def run_pipeline(
           cycle_dir=cycle_dir,
           enforce_template=cfg.enforce_template,
           boltz_ensemble_n=cfg.boltz_ensemble_n,
+          save_structures=cfg.save_structures,
         )
 
         # Merge results: novel gets fresh evaluation, duplicates get cached.
@@ -2625,6 +2788,7 @@ def run_pipeline(
           cycle_dir=cycle_dir,
           enforce_template=cfg.enforce_template,
           boltz_ensemble_n=cfg.boltz_ensemble_n,
+          save_structures=cfg.save_structures,
         )
 
       # When enforce_template is False, sequences with template mismatches
@@ -2642,6 +2806,30 @@ def run_pipeline(
         f"Warning: all generation attempts produced only inf-energy or "
         f"duplicate sequences in cycle {cycle}. Proceeding with last batch."
       )
+
+    # Fix 6: If dedup modified the batch, token data is stale for replaced
+    # positions.  Keep only the subset of sequences that survived unchanged.
+    # The token IDs, log-probs, and masks at those positions are still valid.
+    if batch_modified and grpo_token_data is not None:
+      orig_seqs = grpo_token_data.get("_original_seqs")
+      if orig_seqs is not None:
+        # Find indices of original sequences that are still in the final batch
+        keep = [i for i, s in enumerate(orig_seqs) if s in gen_seqs]
+        if keep:
+          keep_t = torch.tensor(keep)
+          grpo_token_data = {
+            "input_ids": grpo_token_data["input_ids"],
+            "generated_tokens": grpo_token_data["generated_tokens"][keep_t],
+            "old_per_token_lps": grpo_token_data["old_per_token_lps"][keep_t],
+            "old_per_token_mask": grpo_token_data["old_per_token_mask"][keep_t],
+          }
+          print(f"  grpo_token_data: kept {len(keep)}/{len(orig_seqs)} valid entries after dedup")
+        else:
+          grpo_token_data = None
+          print("  grpo_token_data invalidated (no original sequences survived dedup)")
+      else:
+        grpo_token_data = None
+        print("  grpo_token_data invalidated (batch was modified by dedup)")
 
     # Log all generated sequences to CSV.
     append_cycle_csv(
@@ -2668,6 +2856,7 @@ def run_pipeline(
     print(f"  Avg sequence similarity to prompt:   {avg_sim_to_prompt:.4f}")
 
     # Update global elite if this cycle's best beats it.
+    elite_energy_before_cycle = elite_energy
     cycle_best_idx = int(np.argmin(energies))
     cycle_best_energy = float(energies[cycle_best_idx])
     if cycle_best_energy < elite_energy:
@@ -2765,6 +2954,7 @@ def run_pipeline(
         "old_per_token_lps": grpo_token_data["old_per_token_lps"][:n_keep],    # (G, L-1) CPU
         "old_per_token_mask": grpo_token_data["old_per_token_mask"][:n_keep],  # (G, L-1) CPU
         "rewards": current_rewards[:n_keep].cpu(),                              # (G,) CPU
+        "sequences": list(gen_seqs[:n_keep]),                                   # for seen-before check
       }
       if n_gen != n_rew:
         print(f"  GRPO: trimmed batch {n_gen} tokens vs {n_rew} rewards -> {n_keep}")
@@ -2823,6 +3013,34 @@ def run_pipeline(
         # use consistent normalisation.
         full_advantages = profam_model._compute_grpo_advantages(merged_rewards.to(profam_device))
 
+        # Fix 5: Clamp advantage to ≤ 0 for CURRENT-CYCLE sequences that
+        # were already seen in a prior cycle.  This prevents the model from
+        # being rewarded for re-generating known sequences, while leaving
+        # replay buffer entries untouched (they serve as a normalisation
+        # baseline for advantage computation, not as generation targets).
+        current_seqs = grpo_replay_buffer[-1].get("sequences", [])
+        if current_seqs and cfg.deduplicate_sequences:
+          # Sequences first seen this cycle won't be in prior_seen
+          prior_seen = set()
+          for entry in grpo_replay_buffer[:-1]:
+            prior_seen.update(entry.get("sequences", []))
+
+          # Current-cycle entries are at the END of the merged tensor
+          offset = n_total - len(current_seqs)
+          n_clamped = 0
+          for j, seq in enumerate(current_seqs):
+            idx = offset + j
+            if idx < len(full_advantages) and seq in prior_seen:
+              full_advantages[idx] = torch.clamp(full_advantages[idx], max=0.0)
+              n_clamped += 1
+          frac_clamped = n_clamped / len(current_seqs) if current_seqs else 0.0
+          if n_clamped > 0:
+            print(f"  GRPO: clamped advantage ≤ 0 for {n_clamped}/{len(current_seqs)} "
+                  f"current-cycle sequences seen in prior cycles ({frac_clamped:.1%})")
+          if wandb_run is not None:
+            import wandb
+            wandb.log({"grpo/seen_clamped_fraction": frac_clamped}, step=cycle)
+
         for rl_step_i in range(cfg.rl_steps_per_cycle):
           grpo_step.optimizer.zero_grad()
           accum_metrics: Dict[str, float] = {}
@@ -2837,7 +3055,7 @@ def run_pipeline(
             mb_advantages = full_advantages[mb_start:mb_end]
             orig_normalize = profam_model.grpo_normalize_rewards
             orig_baseline = profam_model.grpo_reward_baseline
-            profam_model.grpo_normalize_rewards = False
+            profam_model.grpo_normalize_rewards = False # temporarily disable so we don't normalise twice
             profam_model.grpo_reward_baseline = "none"
             mb_loss, mb_metrics = profam_model.grpo_step_from_rewards(
               input_ids=grpo_token_data["input_ids"],
@@ -2880,12 +3098,10 @@ def run_pipeline(
       for seq, energy in zip(gen_seqs, energies):
         if np.isfinite(energy):
           bt_pool.append((energy, seq))
-      # Keep pool sorted by energy and capped at pool_size
-      bt_pool.sort(key=lambda x: x[0])
+      # Keep the most recent sequences, capped at pool_size.
+      # This trains on the current quality frontier for fine-grained ranking.
       if len(bt_pool) > cfg.bt_pool_size:
-        # Keep best half + worst half for contrast
-        half = cfg.bt_pool_size // 2
-        bt_pool = bt_pool[:half] + bt_pool[-half:]
+        bt_pool = bt_pool[-cfg.bt_pool_size:]
 
       if len(bt_pool) >= 4:  # need at least a few pairs
         from pipeline.bradley_terry import bradley_terry_loss, score_variants_differentiable
@@ -2955,19 +3171,21 @@ def run_pipeline(
           torch.cuda.empty_cache()
 
     # ---- Temperature adjustment ----
-    unique_fraction = len(set(gen_seqs)) / len(gen_seqs) if gen_seqs else 0.0
+    # Use raw diversity metrics (computed BEFORE dedup) for temperature control.
+    unique_fraction = raw_unique_fraction
 
-    if temp_bandit is None:
-      # Adaptive heuristic: raise on low diversity, lower toward starting temp
+    # Only adjust temperature when using profam proposals — random_mutation ignores temperature.
+    if temp_bandit is None and cycle_proposal_method == "profam":
       prev_temperature = current_temperature
-      if unique_fraction < 2.0 / 3.0:
-        current_temperature += 0.1
-        print(f"  Adaptive temp: low diversity ({unique_fraction:.2f}), "
+      current_temperature, temp_reason = adjust_temperature(
+        raw_unique_fraction, raw_novel_fraction, avg_sim_to_prompt,
+        current_temperature, starting_temperature,
+      )
+      if temp_reason:
+        print(f"  Adaptive temp: {temp_reason}, "
               f"raising temperature {prev_temperature:.2f} → {current_temperature:.2f}")
-      elif unique_fraction == 1.0 and current_temperature > starting_temperature:
-        reduction = min(current_temperature - starting_temperature, 0.05)
-        current_temperature -= reduction
-        print(f"  Adaptive temp: all unique, "
+      elif current_temperature != prev_temperature:
+        print(f"  Adaptive temp: all unique & novel, "
               f"lowering temperature {prev_temperature:.2f} → {current_temperature:.2f}")
       cfg.profam_temperature = current_temperature
 
@@ -2984,9 +3202,18 @@ def run_pipeline(
         "similarity/to_prompt": avg_sim_to_prompt,
         "generation/num_sequences": len(gen_seqs),
         "generation/unique_fraction": unique_fraction,
+        "generation/raw_unique_fraction": raw_unique_fraction,
+        "generation/raw_novel_fraction": raw_novel_fraction,
+        "generation/prompt_copies": n_prompt_copies,
         "generation/temperature": cycle_temperature if cycle_temperature is not None else current_temperature,
         "generation/mean_length": float(np.mean([len(s) for s in gen_seqs])),
+        "generation/proposal_method": 1.0 if cycle_proposal_method == "profam" else 0.0,
       }
+      if proposal_bandit is not None:
+        for p_info in proposal_bandit.get_state_dict():
+          m = p_info["method"]
+          log_dict[f"bandit/{m}_p_improve"] = p_info["expected_reward"]
+          log_dict[f"bandit/{m}_selected"] = p_info["times_selected"]
       # Per-energy-term breakdown (if available)
       if details:
         for key in details[0].get("energy_terms", {}):
@@ -3070,23 +3297,13 @@ def run_pipeline(
         print(f"  Temperature bandit UPDATE: T={cycle_temperature}, "
               f"reward={temp_reward:.4f}")
 
-      # 3. Update proposal bandit with the progeny reward.
+      # 3. Update proposal bandit: did this cycle improve over the previous best?
       if proposal_bandit is not None:
-        if cfg.proposal_bandit_relative_reward and update_stats and update_stats.get('updated'):
-          best_progeny_ipsae = update_stats['best_progeny_ipsae']
-          relative_reward = float(np.clip(
-            prev_injection_best_energy - best_progeny_ipsae, -1.0, 1.0
-          ))
-          prop_reward = (relative_reward + 1.0) / 2.0
-          print(f"  Proposal bandit: parent_E={prev_injection_best_energy:.4f}, "
-                f"progeny_E={best_progeny_ipsae:.4f}, relative={relative_reward:+.4f}")
-        elif thompson_progeny_reward is not None:
-          prop_reward = thompson_progeny_reward
-        else:
-          prop_reward = 0.5  # neutral if no finite progeny
-        proposal_bandit.update(cycle_proposal_method, prop_reward)
+        cycle_best = float(min(energies)) if energies else float("inf")
+        improved = cycle_best < elite_energy_before_cycle
+        proposal_bandit.update(cycle_proposal_method, improved)
         print(f"  Proposal bandit UPDATE: method={cycle_proposal_method}, "
-              f"reward={prop_reward:.4f}")
+              f"improved={improved} (cycle_best={cycle_best:.4f}, prev_elite={elite_energy_before_cycle:.4f})")
 
       # 4. Register ALL progeny as new arms (THE BUG FIX - this now happens
       #    for BOTH selection_strategy="thompson" AND "greedy" with bandit).
@@ -3204,6 +3421,9 @@ def run_pipeline(
         thompson_selected_arm_id=thompson_selected_arm_id,
         thompson_progeny_reward=thompson_progeny_reward,
         proposal_method=cycle_proposal_method,
+        prompt_sequences=list(all_seqs),
+        raw_unique_fraction=raw_unique_fraction,
+        raw_novel_fraction=raw_novel_fraction,
       )
       save_selected_structures(
         cycle_index=cycle,
@@ -3211,6 +3431,7 @@ def run_pipeline(
         folding_results=folding_results,
         output_dir=cfg.output_dir,
         pool_offset=pool_offset,
+        save_structures=cfg.save_structures,
       )
 
       # Restore original temperature on cfg so it doesn't leak.
@@ -3313,6 +3534,9 @@ def run_pipeline(
         elite_cycle=elite_cycle if cfg.elitism else None,
         annealing_temp=annealing_temp if cfg.annealing_initial_temp is not None else None,
         proposal_method=cycle_proposal_method,
+        prompt_sequences=list(all_seqs),
+        raw_unique_fraction=raw_unique_fraction,
+        raw_novel_fraction=raw_novel_fraction,
       )
       save_selected_structures(
         cycle_index=cycle,
@@ -3320,6 +3544,7 @@ def run_pipeline(
         folding_results=folding_results,
         output_dir=cfg.output_dir,
         pool_offset=pool_offset,
+        save_structures=cfg.save_structures,
       )
 
       # Update injection set: only on accepted swaps (and only if prompt is not frozen).

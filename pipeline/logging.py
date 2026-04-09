@@ -37,6 +37,9 @@ def update_cycle_log(
     thompson_selected_arm_id: int | None = None,
     thompson_progeny_reward: float | None = None,
     proposal_method: str | None = None,
+    prompt_sequences: list[str] | None = None,
+    raw_unique_fraction: float | None = None,
+    raw_novel_fraction: float | None = None,
 ) -> None:
     """Append / update a JSON log keyed by cycle index.
 
@@ -153,6 +156,12 @@ def update_cycle_log(
         cycle_entry["annealing_temp"] = annealing_temp
     if proposal_method is not None:
         cycle_entry["proposal_method"] = proposal_method
+    if prompt_sequences is not None:
+        cycle_entry["prompt_sequences"] = prompt_sequences
+    if raw_unique_fraction is not None:
+        cycle_entry["raw_unique_fraction"] = raw_unique_fraction
+    if raw_novel_fraction is not None:
+        cycle_entry["raw_novel_fraction"] = raw_novel_fraction
     if thompson_selected_arm_id is not None:
         cycle_entry["thompson_selected_arm_id"] = thompson_selected_arm_id
     if thompson_progeny_reward is not None:
@@ -172,6 +181,7 @@ def save_selected_structures(
     folding_results: Sequence[Any],
     output_dir: Path,
     pool_offset: int = 0,
+    save_structures: bool = False,
 ) -> None:
     """Save CIF structures for the selected subset into `sequences_cycle_<cycle>`.
 
@@ -181,7 +191,11 @@ def save_selected_structures(
         When n_memory > 0, ``selected_indices`` index into the combined pool.
         ``pool_offset`` is the index at which the current cycle's sequences
         start.  Only current-cycle sequences have folding results available.
+    save_structures : bool
+        If False (default), skip saving CIF/PAE/PLDDT files to save disk space.
     """
+    if not save_structures:
+        return
     if not any(fr is not None for fr in folding_results):
         return
 

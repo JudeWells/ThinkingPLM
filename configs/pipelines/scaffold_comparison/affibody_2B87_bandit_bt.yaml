@@ -1,0 +1,56 @@
+## Scaffold Comparison: affibody_2B87 / bandit_bt
+## Target: 2GDZ (15-PGDH)
+## Total evaluations: 5400
+
+accept_only_improvement: true
+bt_batch_size: 32
+bt_enabled: true
+bt_every_n_cycles: 1
+bt_lr: 2e-05
+bt_pool_size: 64
+bt_steps_per_cycle: 1
+bt_sub_batch_size: 4
+deduplicate_sequences: true
+elitism: true
+energy_config: configs/energy/energy_lis_2GDZ_local.yaml
+enforce_template: true
+f_inject: 0.25
+freeze_prompt: false
+grpo_enabled: false
+initial_fasta: configs/sequences/initial_3helix_affibody_2B87.fasta
+likelihood_eval_every: 5
+likelihood_track_n: 10
+max_cycles: 450
+max_mutations: 1
+n_memory: 0
+output_dir: outputs/scaffold_comparison/affibody_2B87/bandit_bt
+output_frequency: 1
+profam_checkpoint_dir: .profam_repo/model_checkpoints/profam-1
+profam_max_tokens: 8192
+profam_num_samples: 12
+profam_sampler: single
+profam_temperature: 0.7
+profam_top_p: 0.95
+proposal_bandit_prior_alpha: 2.0
+proposal_bandit_prior_beta: 2.0
+proposal_bandit_relative_reward: false
+proposal_method: profam
+random_seed: 719532
+reinject_initial: false
+run_on_modal: false
+sample_with_reinsertion: false
+selection_strategy: greedy
+softmax_temperature: 0.01
+thompson_exploit_bias: 8.0
+thompson_m_samples: 1
+thompson_max_arms: 10
+thompson_max_identity: 0.95
+thompson_proposal_bandit: true
+thompson_reward_term: LIS
+wandb_enabled: true
+wandb_project: profam-bagel-pipeline
+wandb_run_name: sc_affibody_2B87_bandit_bt
+wandb_tags:
+  - scaffold_comparison
+  - affibody_2B87
+  - bandit_bt

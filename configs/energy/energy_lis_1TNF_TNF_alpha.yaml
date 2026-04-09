@@ -1,0 +1,20 @@
+## Energy configuration: ESMFold (local GPU) + LIS scoring
+##
+## Target: 1TNF TNF-alpha
+
+folding_oracle:
+  type: BatchedESMFold
+  kwargs:
+    use_modal: false
+    max_batch_size: 16
+
+energies:
+  - type: LISEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 12.0
+      intensive: true
+      target: VRSSSRTPSDKPVAHVVANPQAEGQLQWLNRRANALLANGVELRDNQLVVPSEGLYLIYSQVLFKGQGCPSTHVLLTHTISRIAVSYQTKVNLLSAIKSPCQRETPEGAEAKPWYEPIYLGGVFQLEKGDRLSAEINRPDYLLFAESGQVYFGIIAL
+      residues:
+        GEN: "all"
+        B: "all"

@@ -2,6 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Current Cluster State (2026-04-07)
+
+### Nodes
+
+| Node | IP | Instance | GPUs | Disk Free | Env |
+|------|-----|----------|------|-----------|-----|
+| Node 1 | 3.14.255.102 | p4d.24xlarge | 8x A100-40GB | ~83GB | profam_bagel |
+| Node 2 | 18.191.140.159 | p4d.24xlarge | 8x A100-40GB | ~336GB | profam_bagel |
+| Node 3 | 3.147.78.97 | p4d.24xlarge | 8x A100-40GB | ~112GB | profam_bagel |
+| Node 4 | 3.147.71.187 | p5.4xlarge | 1x H100-80GB | ~82GB | profam_bagel |
+
+SSH: `ssh -i ~/.ssh/gpu-ml-key.pem ubuntu@<IP>`
+
+### Active Experiments
+
+**1. Scaffold Comparison rep2 (15PGDH / 2GDZ target, ESMFold+LIS)**
+- Config generator: `generate_scaffold_comparison_configs.py --replicate 2`
+- Configs: `configs/pipelines/scaffold_comparison/*_rep2.yaml`
+- 4 scaffolds (affibody_2B87, hairpin, beta_sheet_1E0L, bindcraft_15PGDH) × 4 methods (random_greedy, proposal_bandit, bandit_grpo, bandit_bt)
+- Total evaluations per run: 5400 (1-sample methods: 5400 cycles, 12-sample methods: 450 cycles)
+- Node 1: affibody_2B87 (4 methods) + hairpin (4 methods) — all 8 GPUs
+- Node 2: beta_sheet_1E0L (4 methods) + bindcraft_15PGDH (4 methods) — GPUs 1-3, 5-7 (GPUs 0,4 freed after random_greedy completed)
+
+**2. Multi-target Benchmark (5 targets, ESMFold+LIS)**
+- Config generator: `generate_grpo_multi_target_bench.py`
+- Configs: `configs/pipelines/multi_target_bench/*.yaml`
+- 5 targets × 4 scaffolds × 3 methods = 60 configs total
+- Targets: 2VSM_nipah, 4OYD_epstein_barr, 4ZQK_PD-L1, 1TNF_TNF_alpha, 1YCR_MDM2
+- Scaffolds: 4D5, ankyrin, nanobody, random_init
+- Methods: random_greedy, proposal_bandit, bandit_grpo
+- Node 2 GPUs 0,4: TNF_alpha random_init (bandit_grpo, proposal_bandit)
+- Node 3: all 8 GPUs — TNF_alpha (4D5, ankyrin, nanobody configs)
+- Node 4: 1 GPU — TNF_alpha random_init random_greedy
+- 13/60 configs launched so far; remaining 47 to backfill as GPUs free up
+
+### Disk Maintenance
+- `.pae` files are the main disk consumer (~1MB each, 65GB+ at scale). Delete periodically.
+- `.cif` files are secondary (~250KB each). Safe to delete.
+- Old sweep dirs (`sweep_v5/`, `sweep_v6/`, `bt_*/`) can be deleted after results are captured.
+
 ## Quick Start for Agents (AWS/Cloud)
 
 **Goal:** Get the pipeline running as fast as possible on a fresh cloud instance.
