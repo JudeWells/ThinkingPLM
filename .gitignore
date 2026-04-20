@@ -17,3 +17,15 @@ benchmark_binding/
 ipsae_aggregation_benchmark/
 .claude/
 wandb/
+af2_template_corr_output/
+af2_template_output/
+analysis_15pgdh_2o/
+boltz2_corr_input/
+boltz2_input/
+boltz2_output/
+
+boltz2_corr_output/
+colabfold_input/
+colabfold_output/
+final_evaluation/
+final_evaluation/

@@ -1,0 +1,38 @@
+## Energy configuration: Boltz2 + ipSAE + iPTM + PLDDT + length penalty
+##
+## Target: 2GDZ (15-PGDH)
+## Multi-component energy:
+##   - ipSAE (1.0): primary interface metric
+##   - PLDDT (0.1): binder confidence
+##   - iPTM (0.05): predicted interface TM-score
+##   - OneSidedBinderLength (1.0): 0.01 per residue over 120 (binder only)
+##
+## Note: SolMPNN likelihood was requested but requires Modal which we are not using
+
+folding_oracle:
+  type: Boltz
+  kwargs: {}
+
+energies:
+  - type: ipSAEEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 10.0
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: PLDDTEnergy
+    kwargs:
+      weight: 0.1
+      residues:
+        GEN: "all"
+  - type: iPTMEnergy
+    kwargs:
+      weight: 0.05
+  - type: OneSidedBinderLengthEnergy
+    kwargs:
+      weight: 1.0
+      threshold: 120
+      penalty_per_residue: 0.01
+      binder_chain_id: GEN

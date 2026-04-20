@@ -177,44 +177,115 @@ enforce_template: true          # force template residue identity during generat
 
 #### 3.2 Energy YAML configuration
 
-The energy YAML defines the folding oracle and a list of energy terms.
+The energy YAML defines the folding oracle(s) and a list of energy terms.
+Two schemas are supported: **single-oracle** (legacy) and **multi-oracle**
+(for running several predictors side-by-side).
 
-Example:
+**Single-oracle schema:**
 
 ```yaml
 folding_oracle:
-  type: ESMFold
+  type: Boltz
   kwargs:
-    use_modal: false
+    diffusion_samples: 5   # Boltz averages N samples in one subprocess call
+    recycling_steps: 3
 
 energies:
-  - type: PTMEnergy
+  - type: ipSAEEnergy
     kwargs:
       weight: 1.0
-  - type: OverallPLDDTEnergy
+      pae_cutoff: 10.0
+      target: <TARGET_SEQUENCE>
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
     kwargs:
-      weight: 0.5
+      weight: 0.05
 ```
 
-- `folding_oracle.type`: Must be `ESMFold`.
-  - `kwargs` are passed to `bagel.oracles.folding.ESMFold.__init__`.
-  - When `run_on_modal: true` in the pipeline YAML, `use_modal` is **forced to `true`** regardless of this setting.
+Supported oracle types (via `folding_oracle.type` or each entry under
+`folding_oracles:`): `ESMFold`, `BatchedESMFold`, `Boltz` (Boltz2),
+`Chai1`, `AF2BindCraft`, `AlphaFast`, `ColabFold`. `kwargs` are passed
+verbatim to the oracle class's constructor — see the BAGEL source for
+each oracle's full parameter list. Notable per-oracle ensembling kwargs:
+
+- `Boltz.diffusion_samples` (int, default 1) — Boltz averages N
+  diffusion samples inside a single `boltz predict --diffusion_samples N`
+  subprocess call. The oracle returns a single `BoltzResult` whose
+  scalar (pTM, iPTM) and tensor (pLDDT, PAE) metrics are averaged
+  across samples; the structure comes from sample 0.
+- `Chai1.num_diffn_samples` (int, default 5) — Chai-1's native ensemble.
+- `AF2BindCraft.prediction_models` (list[int], default [0, 1]) — which
+  AF2 models to average over.
+
+**Multi-oracle schema** (runs every listed oracle on every sequence and
+extracts per-oracle metrics):
+
+```yaml
+folding_oracles:
+  esmfold:
+    type: BatchedESMFold
+    kwargs: {use_modal: false}
+  boltz2:
+    type: Boltz
+    kwargs: {diffusion_samples: 5}
+  chai1:
+    type: Chai1
+    kwargs: {num_diffn_samples: 3}
+  af2:
+    type: AF2BindCraft
+    kwargs:
+      target_pdb: /abs/path/to/target.pdb
+      target_chain: A
+      conda_env: BindCraft
+
+energies:
+  - type: iPTMEnergy
+    oracle: boltz2        # per-energy oracle reference
+    kwargs: {weight: 0.05, name: b2}
+  - type: iPTMEnergy
+    oracle: chai1
+    kwargs: {weight: 0.05, name: chai}
+  - type: PLDDTEnergy
+    oracle: esmfold
+    kwargs: {weight: 0.1, name: esm, residues: {GEN: "all"}}
+  # ... mix and match to get the same metric from multiple predictors
+```
+
+In multi-oracle mode each sequence is folded by every referenced oracle
+(with a `torch.cuda.empty_cache()` between calls so in-process models
+don't OOM each other). Energy terms without an explicit `oracle:` key
+fall back to the first oracle in `folding_oracles`. Use the `name:`
+kwarg on each energy term to keep metrics from different oracles
+distinct in the cycle stats (e.g. `iPTM_b2` vs `iPTM_chai`).
+
 - `energies`: Each entry is a BAGEL energy term class from `bagel.energies`:
-  - `type`: e.g. `PTMEnergy`, `OverallPLDDTEnergy`, `TemplateMatchEnergy`, `SurfaceAreaEnergy`, `HydrophobicEnergy`, `PAEEnergy`, `SeparationEnergy`, etc.
-  - `kwargs`: Passed to the energy term's `__init__`, with `oracle` set automatically.
-  - If a `residues` field is present, it must be a **dictionary** mapping chain names to residue specifications. The generated chain always uses the key `GEN`. For multi-chain energy terms, additional keys identify target chains (see sections 3.5 and 3.7). Values can be compact range strings (e.g. `"0-43"`), integer lists, or `"all"`.
-  - If a `target` field is present, the pipeline builds a multi-chain system for that energy term (see section 3.5).
-  - Structure references (e.g. `template_structure_path`) can be replaced with `pdb_code` to download directly from the RCSB PDB (see section 3.8).
+  - `type`: e.g. `ipSAEEnergy`, `iPTMEnergy`, `PLDDTEnergy`, `LISEnergy`,
+    `SolMPNNPerplexityEnergy`, `TemplateMatchEnergy`, `SeparationEnergy`, etc.
+  - `oracle` (optional, multi-oracle mode only): name of the oracle to
+    bind this term to. Defaults to the first oracle in `folding_oracles`.
+  - `kwargs`: Passed to the energy term's `__init__`, with `oracle` set
+    automatically to the resolved oracle instance.
+  - If a `residues` field is present, it must be a **dictionary** mapping
+    chain names to residue specifications. The generated chain always
+    uses the key `GEN`. For multi-chain energy terms, additional keys
+    identify target chains (see sections 3.5 and 3.8). Values can be
+    compact range strings (e.g. `"0-43"`), integer lists, or `"all"`.
+  - If a `target` field is present, the pipeline builds a multi-chain
+    system for that energy term (see section 3.5).
+  - Structure references (e.g. `template_structure_path`) can be replaced
+    with `pdb_code` to download directly from the RCSB PDB (see section 3.9).
 
 #### 3.3 TemplateMatchEnergy
 
 `TemplateMatchEnergy` computes the RMSD between a subset of the generated structure and the corresponding subset of a reference template structure. The key concept is that the `residues.GEN` indices specify **the same 0-based positions** in both structures:
 
-1. **`residues`**: A dictionary with a single key `GEN` whose value lists 0-based residue positions extracted from **both** the generated (folded) structure and the template chain. Values can be a compact range string (e.g. `"0-43"`, see section 3.7) or a list of integers. Because the same positions are used on both sides, the atom counts always match.
+1. **`residues`**: A dictionary with a single key `GEN` whose value lists 0-based residue positions extracted from **both** the generated (folded) structure and the template chain. Values can be a compact range string (e.g. `"0-43"`, see section 3.8) or a list of integers. Because the same positions are used on both sides, the atom counts always match.
 
 2. **Template structure loading**: Provide **either**:
    - `template_structure_path` + optional `template_chain_id`: a local CIF/PDB file and chain to filter by.
-   - `pdb_code` + optional `template_chain_id`: a PDB identifier to download from RCSB (see section 3.8).
+   - `pdb_code` + optional `template_chain_id`: a PDB identifier to download from RCSB (see section 3.9).
 
 3. **`backbone_only`**: When `true`, only backbone atoms (CA, N, C — 3 per residue) are compared on both sides. When `false`, all atoms are compared — this requires that the amino-acid identity at each compared position is the same in both structures (otherwise the per-residue atom counts differ).
 
@@ -295,7 +366,7 @@ When a target is present:
 1. The pipeline builds a **target chain** from the provided sequence (or downloaded from PDB). Its chain ID is taken from the non-`GEN` key in the `residues` dict.
 2. The generated sequence uses chain ID `GEN`, the target uses the key from `residues`.
 3. ESMFold folds both chains **together** as a multi-chain complex (using its native `":"` separator).
-4. The `"residues"` dict maps each chain key to its residue indices. `GEN` = residues on the generated chain, the other key = residues on the target chain. Compact range strings are supported (see section 3.7).
+4. The `"residues"` dict maps each chain key to its residue indices. `GEN` = residues on the generated chain, the other key = residues on the target chain. Compact range strings are supported (see section 3.8).
 5. The energy term (e.g. `LISEnergy`) computes the metric across the two chains using the predicted complex structure.
 6. Output CIF files use these chain IDs (`GEN` for the generated chain, the target key for the target chain).
 
@@ -303,7 +374,44 @@ A full example is provided in `example_energy_lis_binding.yaml`.
 
 Multiple energy entries can each have their own target — if two entries share the same target sequence and chain ID, the pipeline de-duplicates them into a single target chain.
 
-#### 3.6 Sequence similarity tracking
+#### 3.6 SolubleMPNN perplexity (designability) energy
+
+`SolMPNNPerplexityEnergy` scores how well a sequence fits its predicted backbone using SolubleMPNN's autoregressive perplexity. Lower perplexity means the sequence is "well-justified" by the backbone. It works with any folding oracle (ESMFold, Boltz, Chai-1, AF2BindCraft) because it only reads the predicted structure from the oracle result.
+
+**Two backends** (select via `use_modal`):
+
+- `use_modal: true` — routes scoring through a deployed Modal app. Kept for backwards compatibility; requires `modal deploy modal_proteinmpnn_score.py`.
+- `use_modal: false` (default, recommended) — runs locally by invoking a bundled BAGEL script (`bagel.scripts.proteinmpnn_scorer`) inside a separate conda env (to isolate ProteinMPNN's older dependency pins from the main BAGEL/Boltz stack). Requires:
+  1. A clone of [ProteinMPNN](https://github.com/dauparas/ProteinMPNN).
+  2. A conda env (e.g. `proteinmpnn`) with torch + numpy that can import it.
+
+**Example config:**
+
+```yaml
+- type: SolMPNNPerplexityEnergy
+  kwargs:
+    weight: 0.1
+    use_modal: false
+    proteinmpnn_env: proteinmpnn
+    proteinmpnn_path: /mnt/disk2/ProteinMPNN
+    backbone_noise: 0.1      # augment_eps — Gaussian noise on backbone coords
+    ensemble_n: 10           # forward passes per call (each with independent noise + decoding order)
+    decoding_order: random   # or "fixed:<seed>" for determinism
+    residues:
+      GEN: "all"
+```
+
+**Ensemble semantics:**
+
+Each of the `ensemble_n` passes re-featurises the structure (applying fresh Gaussian backbone noise when `backbone_noise > 0`) and samples a new decoding order. The returned perplexity is `exp(mean NLL)` across all passes. Setting `backbone_noise > 0` together with `ensemble_n > 1` propagates structural uncertainty into the score.
+
+**Complex context (important):**
+
+The energy is always computed on whatever structure the folding oracle produced. In standard binder campaigns the oracle folds `binder + target` together, so SolMPNN sees the full complex — and even though only residues on the `GEN` chain contribute to the loss, the encoder sees the target as "binding context". This is what you want for binder design: a good interface residue is one that is justified *given the target*, not one that is stable in isolation.
+
+**Validation** (see `test_mpnn_context_significance.py`): On 1YCR (p53 peptide + MDM2), the p53 peptide's perplexity drops from **16.57 ± 0.19** (monomer only) to **4.47 ± 0.07** (in MDM2 complex) — a 73% drop, t-statistic ~-188. This confirms the complex context meaningfully informs the score, well beyond the natural ensemble variance. Always pass the complex to SolMPNN for binder scoring.
+
+#### 3.7 Sequence similarity tracking
 
 At each cycle, the pipeline automatically computes the **average sequence similarity** between the ProFam-generated sequences and the initial input sequences (from `initial_fasta`). For each generated sequence, similarity to each initial sequence is computed via **global pairwise alignment** (Needleman–Wunsch, using Biopython's `PairwiseAligner`) as the fraction of identical residues over the alignment length. This correctly handles insertions and deletions — a single indel no longer shifts all downstream positions. The best (maximum) similarity across all initial sequences is kept, and the mean of those best-match values is:
 
@@ -313,7 +421,7 @@ At each cycle, the pipeline automatically computes the **average sequence simila
 
 This metric helps monitor how much the generated sequences drift from the starting point over successive cycles.
 
-#### 3.7 Compact residue notation
+#### 3.8 Compact residue notation
 
 The `residues` field is a dictionary mapping chain names to residue specifications. Each value can be a compact range string instead of a full list of integers:
 
@@ -343,7 +451,7 @@ This maps residues 0–19 on the generated chain (`GEN`) and residues 0–9 on t
 
 The explicit integer list format (e.g. `[0,1,2,3]`) and the `"all"` shorthand continue to work as values within the dict.
 
-#### 3.8 PDB structure download
+#### 3.9 PDB structure download
 
 Instead of providing a local CIF/PDB file, you can specify a **PDB code** and the pipeline will download the structure from the [RCSB PDB](https://www.rcsb.org/):
 
@@ -365,7 +473,7 @@ The pipeline downloads the CIF, extracts the specified chain, and uses its seque
 
 The utility functions `download_pdb_cif()` and `extract_chain_from_cif()` are also available for standalone use from `run_profam_bagel_pipeline`.
 
-#### 3.9 Selection strategy
+#### 3.10 Selection strategy
 
 The pipeline supports two strategies for choosing which sequences to condition ProFam on in the next cycle:
 
@@ -415,7 +523,7 @@ An example config is at `configs/pipelines/pipeline_thompson_example.yaml`.
 | Long exploratory runs, multiple scaffolds, unknown which sequences are good generators | `thompson` |
 | Need to balance exploration vs exploitation across a growing pool of candidates | `thompson` with `thompson_m_samples: 3` |
 
-#### 3.10 Selection memory (`n_memory`)
+#### 3.11 Selection memory (`n_memory`)
 
 By default, when selecting which sequences to inject into the next ProFam cycle, only the sequences generated in the **current** cycle are considered. The `n_memory` parameter widens this selection pool to include sequences from previous cycles:
 

@@ -19,11 +19,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GRPOConfig:
-    """Configuration for pipeline-integrated GRPO training."""
+    """Configuration for pipeline-integrated GRPO training.
+
+    There is no explicit "group size" knob: the effective GRPO batch for
+    each step is the full replay buffer assembled by the pipeline, whose
+    size is ``profam_num_samples * (grpo_replay_cycles + 1)``.
+    """
 
     enabled: bool = False
     grpo_beta: float = 0.05          # KL penalty coefficient
-    grpo_group_size: int = 16        # Number of sequences per GRPO step
     grpo_clip_ratio: float = 0.2     # PPO-style clipping epsilon
     grpo_lr: float = 1e-5            # Learning rate for AdamW
     grpo_weight_decay: float = 0.01  # Weight decay

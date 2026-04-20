@@ -1,0 +1,137 @@
+## Multi-oracle energy: ESMFold + Boltz2  (Chai-1 dropped for speed)
+##
+## Target: 2GDZ (15-PGDH)
+## 2 folding oracles per sequence; SolMPNN and pLDDT weights bumped up
+## relative to the 3-oracle variant so that designability/confidence signal
+## is not dominated by ipSAE.
+##
+## Per-oracle weight totals (summed across oracles that support each term):
+##   - ipSAE total 1.0    (0.5    each × 2 oracles)
+##   - iPTM  total 0.05   (Boltz2 only — ESMFold has no chain_pair_iptm)
+##   - PLDDT total 0.2    (0.1    each × 2 oracles)   — 2× previous
+##   - PAE   total 0.01   (0.005  each × 2 oracles)   [cross-term only]
+##
+## Single-oracle terms (attached to ESMFold, cheapest in-process):
+##   - SolMPNNPerplexityEnergy: 0.1   (designability proxy, ~3.3× previous)
+##   - HydrophobicEnergy:       0.05  (surface mode, GEN chain only)
+##   - GlobularEnergy:          0.02  (compactness prior, GEN chain only)
+##
+## Oracle-independent:
+##   - OneSidedBinderLengthEnergy: 1.0 weight, 0.01/res over 120 (binder only)
+##
+## Thompson reward signal is always the composite weighted total energy.
+
+folding_oracles:
+  esmfold:
+    type: BatchedESMFold
+    kwargs:
+      use_modal: false
+      max_batch_size: 16
+  boltz2:
+    type: Boltz
+    kwargs:
+      # Internal ensemble — Boltz runs 10 diffusion samples and averages
+      # scalar + tensor metrics (pTM, iPTM, pLDDT, PAE) into one BoltzResult.
+      diffusion_samples: 10
+
+energies:
+  # --- ESMFold metrics ---
+  # ESMFold's result class has no chain_pair_iptm → iPTMEnergy excluded.
+  - type: ipSAEEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.5
+      pae_cutoff: 12.0
+      name: esm
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: PLDDTEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.1
+      name: esm
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.005
+      name: esm
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- Boltz2 metrics ---
+  - type: ipSAEEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.5
+      pae_cutoff: 10.0
+      name: b2
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.05
+      name: b2
+  - type: PLDDTEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.1
+      name: b2
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.005
+      name: b2
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- Structure-derived single-oracle terms (attached to ESMFold) ---
+  - type: SolMPNNPerplexityEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.1
+      name: esm
+      residues:
+        GEN: "all"
+      use_modal: false
+      proteinmpnn_env: proteinmpnn
+      # Relative to the ThinkingPLM repo root — created by setup_environment.sh.
+      proteinmpnn_path: .proteinmpnn_repo
+      backbone_noise: 0.1
+      ensemble_n: 10
+      decoding_order: random
+  - type: HydrophobicEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.05
+      name: esm
+      mode: surface
+      residues:
+        GEN: "all"
+  - type: GlobularEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.02
+      name: esm
+      residues:
+        GEN: "all"
+
+  # --- Binder length penalty (oracle-independent) ---
+  - type: OneSidedBinderLengthEnergy
+    kwargs:
+      weight: 1.0
+      threshold: 120
+      penalty_per_residue: 0.01
+      binder_chain_id: GEN

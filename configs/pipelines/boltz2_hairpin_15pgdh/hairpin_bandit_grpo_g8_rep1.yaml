@@ -1,0 +1,60 @@
+## Boltz2 Hairpin 15PGDH bandit_grpo (rep 1)
+## Energy: ipSAE + 0.1 PLDDT + 0.05 iPTM + binder length penalty (>120)
+## GRPO group_size=8, replay_cycles=14
+
+accept_only_improvement: true
+bt_enabled: false
+deduplicate_sequences: true
+elitism: true
+energy_config: configs/energy/energy_boltz2_full_2GDZ_15PGDH.yaml
+enforce_template: false
+f_inject: 0.25
+freeze_prompt: false
+grpo_beta: 0.0
+grpo_clip_ratio: 0.2
+grpo_enabled: true
+grpo_group_size: 8
+grpo_lr: 2e-05
+grpo_replay_cycles: 14
+grpo_temperature: 1.0
+grpo_use_reference_model: false
+initial_fasta: configs/sequences/initial_sequence_hairpin.fasta
+likelihood_eval_every: 5
+likelihood_track_n: 10
+max_cycles: 450
+max_mutations: 1
+n_memory: 0
+output_dir: outputs/boltz2_hairpin_15pgdh/bandit_grpo_g8_rep1
+output_frequency: 1
+profam_checkpoint_dir: .profam_repo/model_checkpoints/profam-1
+profam_max_tokens: 8192
+profam_num_samples: 12
+profam_sampler: single
+profam_temperature: 0.7
+profam_top_p: 0.95
+proposal_bandit_prior_alpha: 2.0
+proposal_bandit_prior_beta: 2.0
+proposal_bandit_relative_reward: false
+proposal_method: profam
+random_seed: 33388
+reinject_initial: false
+rl_every_n_cycles: 1
+rl_steps_per_cycle: 1
+run_on_modal: false
+sample_with_reinsertion: false
+selection_strategy: greedy
+softmax_temperature: 0.01
+thompson_exploit_bias: 8.0
+thompson_m_samples: 1
+thompson_max_arms: 10
+thompson_max_identity: 0.95
+thompson_proposal_bandit: true
+thompson_reward_term: ipSAE
+wandb_enabled: true
+wandb_project: profam-bagel-pipeline
+wandb_run_name: b2hp_grpo_g8_rep1
+wandb_tags:
+  - boltz2_hairpin_15pgdh
+  - bandit_grpo
+  - group8
+  - rep1

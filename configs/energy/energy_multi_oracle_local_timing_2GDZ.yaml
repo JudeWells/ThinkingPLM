@@ -1,0 +1,173 @@
+## LOCAL TIMING VARIANT — Boltz2 + Chai-1 + AF2BindCraft (no ESMFold)
+##
+## Purpose: benchmark per-cycle time on the local 24 GB 3090, which cannot
+## hold ESMFold + Chai-1 in-process simultaneously.  The remote 40 GB A100
+## runs the full 4-oracle config (`energy_multi_oracle_full_2GDZ_15PGDH.yaml`);
+## this file is a stripped-down 3-oracle variant that exercises the same
+## pipeline code path (multi-oracle dispatch, per-oracle energy resolution,
+## SolMPNN local subprocess) but without ESMFold.
+##
+## SolMPNN / Hydrophobic / Globular are attached to `boltz2` (instead of
+## esmfold) because Boltz is subprocess-isolated and doesn't share GPU memory
+## with Chai-1.
+
+folding_oracles:
+  boltz2:
+    type: Boltz
+    kwargs:
+      diffusion_samples: 1
+  chai1:
+    type: Chai1
+    kwargs:
+      num_diffn_samples: 1
+      num_diffn_timesteps: 100
+      num_trunk_recycles: 2
+      use_esm_embeddings: true
+      use_msa_server: false
+  af2:
+    type: AF2BindCraft
+    kwargs:
+      target_pdb: /mnt/disk2/ThinkingPLM/target_pdbs/2GDZ.pdb
+      target_chain: A
+      conda_env: BindCraft
+      af_params_dir: /mnt/disk2/BindCraft/params
+      num_recycles: 1
+      prediction_models: [0]
+
+energies:
+  # --- Boltz2 metrics ---
+  - type: ipSAEEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.33
+      pae_cutoff: 10.0
+      name: b2
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.0167
+      name: b2
+  - type: PLDDTEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.033
+      name: b2
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.0033
+      name: b2
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- Chai-1 metrics ---
+  - type: ipSAEEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.33
+      pae_cutoff: 10.0
+      name: chai
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.0167
+      name: chai
+  - type: PLDDTEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.033
+      name: chai
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.0033
+      name: chai
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- AF2 BindCraft metrics ---
+  - type: ipSAEEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.33
+      pae_cutoff: 10.0
+      name: af2
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.0167
+      name: af2
+  - type: PLDDTEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.033
+      name: af2
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.0033
+      name: af2
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- Structure-derived single-oracle terms (attached to boltz2 locally) ---
+  - type: SolMPNNPerplexityEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.03
+      name: b2
+      residues:
+        GEN: "all"
+      use_modal: false
+      proteinmpnn_env: proteinmpnn
+      proteinmpnn_path: .proteinmpnn_repo
+      backbone_noise: 0.1
+      ensemble_n: 10
+      decoding_order: random
+  - type: HydrophobicEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.05
+      name: b2
+      mode: surface
+      residues:
+        GEN: "all"
+  - type: GlobularEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.02
+      name: b2
+      residues:
+        GEN: "all"
+
+  # --- Binder length penalty (oracle-independent) ---
+  - type: OneSidedBinderLengthEnergy
+    kwargs:
+      weight: 1.0
+      threshold: 120
+      penalty_per_residue: 0.01
+      binder_chain_id: GEN

@@ -77,6 +77,7 @@ import torch
 from biotite.structure.io.pdb import PDBFile  # type: ignore
 from biotite.structure.io.pdbx import CIFFile, get_structure  # type: ignore
 
+import pipeline.custom_energies  # noqa: F401  # registers custom energies into bagel.energies
 from pipeline.bandits import (
     ProposalBandit,
     TemperatureBandit,
@@ -99,7 +100,6 @@ from pipeline.selection import (
 )
 from pipeline.utils import (
     compute_avg_sequence_similarity,
-    extract_reward_term,
     sample_subset_indices,
     softmax_from_energies,
 )
@@ -179,7 +179,6 @@ class PipelineConfig:
 
   selection_strategy: str = "greedy"       # "greedy" or "thompson"
   thompson_m_samples: int = 1             # max-seeking: sample m times per arm
-  thompson_reward_term: str = "ipSAE"     # energy term name for reward
   thompson_exploit_bias: float = 1.0      # >1 = more exploitation (concentrate posteriors)
   thompson_temperature_bins: List[float] | None = None  # e.g. [0.6, 0.8, 1.0, 1.3]; None = fixed temperature
   thompson_proposal_bandit: bool = False   # True = Thompson bandit over proposal methods (profam vs random_mutation)
@@ -194,12 +193,11 @@ class PipelineConfig:
   random_init: bool = False                # if True, generate a random initial sequence instead of reading from FASTA
   random_init_max_residues: int = 80       # max length of randomly generated initial sequence
 
-  boltz_ensemble_n: int = 1                # Number of Boltz predictions to average (1 = no ensembling)
-
-  # GRPO (online RL fine-tuning of ProFam)
+  # GRPO (online RL fine-tuning of ProFam).  There is no explicit
+  # group-size knob: the effective GRPO batch is the full replay buffer,
+  # size = profam_num_samples * (grpo_replay_cycles + 1).
   grpo_enabled: bool = False
   grpo_beta: float = 0.05
-  grpo_group_size: int = 16
   grpo_clip_ratio: float = 0.2
   grpo_lr: float = 1e-5
   grpo_weight_decay: float = 0.01
@@ -321,7 +319,6 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     freeze_prompt=_to_bool(pick("freeze_prompt", False)),
     selection_strategy=str(pick("selection_strategy", "greedy")),
     thompson_m_samples=int(pick("thompson_m_samples", 1)),
-    thompson_reward_term=str(pick("thompson_reward_term", "ipSAE")),
     thompson_exploit_bias=float(pick("thompson_exploit_bias", 1.0)),
     thompson_temperature_bins=(
       None
@@ -338,11 +335,9 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     save_structures=_to_bool(pick("save_structures", False)),
     random_init=_to_bool(pick("random_init", False)),
     random_init_max_residues=int(pick("random_init_max_residues", 80)),
-    boltz_ensemble_n=int(pick("boltz_ensemble_n", 1)),
     # GRPO fields
     grpo_enabled=_to_bool(pick("grpo_enabled", False)),
     grpo_beta=float(pick("grpo_beta", 0.05)),
-    grpo_group_size=int(pick("grpo_group_size", 16)),
     grpo_clip_ratio=float(pick("grpo_clip_ratio", 0.2)),
     grpo_lr=float(pick("grpo_lr", 1e-5)),
     grpo_weight_decay=float(pick("grpo_weight_decay", 0.01)),
@@ -372,9 +367,6 @@ def merge_config(yaml_cfg: Dict[str, Any], args: argparse.Namespace) -> Pipeline
     wandb_run_name=pick("wandb_run_name", None),
     wandb_tags=pick("wandb_tags", None),
   )
-
-  if cfg.boltz_ensemble_n < 1:
-    raise ValueError(f"boltz_ensemble_n must be >= 1, got {cfg.boltz_ensemble_n}")
 
   if cfg.proposal_method not in ("profam", "random_mutation"):
     raise ValueError(
@@ -638,15 +630,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ),
   )
   p.add_argument(
-    "--thompson_reward_term",
-    type=str,
-    default=None,
-    help=(
-      "Energy term name to use as the reward signal for Thompson sampling. "
-      "Default: 'ipSAE'. Must match a term name in the energy config."
-    ),
-  )
-  p.add_argument(
     "--thompson_exploit_bias",
     type=float,
     default=None,
@@ -699,25 +682,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ),
   )
 
-  # Boltz ensembling for noise reduction.
-  p.add_argument(
-    "--boltz_ensemble_n",
-    type=int,
-    default=None,
-    help=(
-      "Number of Boltz structure predictions to run per sequence and average "
-      "to reduce noise in the energy estimate. Default: 1 (no ensembling). "
-      "Higher values (e.g., 3) reduce noise but increase compute time."
-    ),
-  )
-
   # GRPO (online RL fine-tuning).
   p.add_argument("--grpo_enabled", type=str, default=None,
                   help="Enable GRPO online RL fine-tuning of ProFam model weights.")
   p.add_argument("--grpo_beta", type=float, default=None,
                   help="KL penalty coefficient for GRPO (default: 0.05).")
-  p.add_argument("--grpo_group_size", type=int, default=None,
-                  help="Number of sequences per GRPO step (default: 16).")
   p.add_argument("--grpo_clip_ratio", type=float, default=None,
                   help="PPO-style clipping epsilon (default: 0.2).")
   p.add_argument("--grpo_lr", type=float, default=None,
@@ -1222,12 +1191,9 @@ def _load_structure_from_spec(kwargs: Dict[str, Any]) -> Any:
   return None, False
 
 
-def build_folding_oracle(energy_cfg: Dict[str, Any], force_modal: bool = False) -> FoldingOracle:
-  folding_cfg = energy_cfg.get("folding_oracle", {}) or {}
-  oracle_type = folding_cfg.get("type", "ESMFold")
-  kwargs = folding_cfg.get("kwargs", {}) or {}
-  if not isinstance(kwargs, dict):
-    raise ValueError("folding_oracle.kwargs must be a dictionary.")
+def _instantiate_folding_oracle(oracle_type: str, kwargs: Dict[str, Any], force_modal: bool = False) -> FoldingOracle:
+  """Instantiate a single folding oracle from a type string and kwargs dict."""
+  kwargs = dict(kwargs)  # don't mutate caller's dict
   if oracle_type == "ESMFold":
     if force_modal:
       kwargs["use_modal"] = True
@@ -1238,130 +1204,86 @@ def build_folding_oracle(energy_cfg: Dict[str, Any], force_modal: bool = False) 
     from pipeline.batched_esmfold import BatchedESMFold
     return BatchedESMFold(**kwargs)
   elif oracle_type == "AlphaFast":
-    # AlphaFast always runs on Modal — force_modal is implicit
     return AlphaFast(**kwargs)
   elif oracle_type == "Boltz":
-    # Boltz runs locally via CLI subprocess
     return Boltz(**kwargs)
+  elif oracle_type == "Chai1":
+    from bagel.oracles.folding import Chai1
+    return Chai1(**kwargs)
+  elif oracle_type == "AF2BindCraft":
+    from bagel.oracles.folding import AF2BindCraft
+    return AF2BindCraft(**kwargs)
   elif oracle_type == "ColabFold":
     from pipeline.colabfold_oracle import ColabFold
     return ColabFold(**kwargs)
   else:
     raise ValueError(
       f"Unsupported folding oracle type: {oracle_type!r}. "
-      f"Use 'ESMFold', 'AlphaFast', 'Boltz', or 'ColabFold'."
+      f"Use 'ESMFold', 'BatchedESMFold', 'AlphaFast', 'Boltz', 'Chai1', "
+      f"'AF2BindCraft', or 'ColabFold'."
     )
 
 
-def run_boltz_ensemble(
-  boltz_oracle: Boltz,
-  chains: list,
-  n_samples: int,
-  seed: int | None = None,
-) -> List[Any]:
+def build_folding_oracles(
+  energy_cfg: Dict[str, Any],
+  force_modal: bool = False,
+) -> Dict[str, FoldingOracle]:
+  """Build a mapping of name → FoldingOracle from the energy config.
+
+  Two YAML schemas are supported:
+
+  **Single-oracle (legacy):**
+  ::
+      folding_oracle:
+        type: ESMFold
+        kwargs: {...}
+
+  Returns ``{"default": <oracle>}``.
+
+  **Multi-oracle (new):**
+  ::
+      folding_oracles:
+        esmfold: {type: ESMFold, kwargs: {...}}
+        boltz2:  {type: Boltz,   kwargs: {...}}
+
+  Each energy entry can then reference one of these oracles by name via an
+  ``oracle: <name>`` key.  Energy entries that omit the ``oracle`` key fall
+  back to the first oracle in insertion order (treated as the "primary").
   """
-  Run Boltz with --diffusion_samples N to generate N samples in a SINGLE call.
+  if "folding_oracles" in energy_cfg and energy_cfg["folding_oracles"]:
+    oracles_cfg = energy_cfg["folding_oracles"]
+    if not isinstance(oracles_cfg, dict):
+      raise ValueError("energy_cfg.folding_oracles must be a dict of {name: {type, kwargs}}.")
+    oracles: Dict[str, FoldingOracle] = {}
+    for name, entry in oracles_cfg.items():
+      if not isinstance(entry, dict):
+        raise ValueError(f"folding_oracles[{name!r}] must be a dict with 'type' and 'kwargs'.")
+      otype = entry.get("type")
+      if not isinstance(otype, str):
+        raise ValueError(f"folding_oracles[{name!r}].type must be a string, got {otype!r}.")
+      okwargs = entry.get("kwargs", {}) or {}
+      if not isinstance(okwargs, dict):
+        raise ValueError(f"folding_oracles[{name!r}].kwargs must be a dict.")
+      oracles[name] = _instantiate_folding_oracle(otype, okwargs, force_modal=force_modal)
+    if not oracles:
+      raise ValueError("folding_oracles must define at least one oracle.")
+    return oracles
 
-  This is more efficient than calling Boltz N times because the model is loaded
-  only once. Each sample uses different random noise in the diffusion process.
-
-  Parameters
-  ----------
-  boltz_oracle : Boltz
-      The BAGEL Boltz oracle instance.
-  chains : list[Chain]
-      The chains to fold.
-  n_samples : int
-      Number of diffusion samples to generate.
-  seed : int or None
-      Random seed for reproducibility. If None, Boltz uses internal randomness.
-
-  Returns
-  -------
-  list[BoltzResult]
-      One BoltzResult per sample.
-  """
-  import tempfile
-
-  if n_samples <= 1:
-    # Just use the standard single-sample path
-    return [boltz_oracle.predict(chains=chains)]
-
-  with tempfile.TemporaryDirectory(prefix="boltz_ensemble_") as tmpdir:
-    tmpdir_path = Path(tmpdir)
-
-    # Write Boltz input YAML
-    yaml_path = tmpdir_path / "input.yaml"
-    boltz_oracle._chains_to_boltz_yaml(chains, yaml_path)
-
-    out_dir = tmpdir_path / "output"
-    out_dir.mkdir()
-
-    # Build args with --diffusion_samples N
-    boltz_args = boltz_oracle._build_boltz_args(str(yaml_path), str(out_dir))
-    boltz_args.extend(["--diffusion_samples", str(n_samples)])
-    if seed is not None:
-      boltz_args.extend(["--seed", str(seed)])
-
-    # Run Boltz once
-    boltz_oracle._run_boltz_subprocess(boltz_args)
-
-    # Parse ALL model outputs (model_0, model_1, ..., model_{n_samples-1})
-    results = []
-    for model_idx in range(n_samples):
-      try:
-        # Find files for this model index
-        output_files = _find_boltz_model_files(out_dir, model_idx)
-        if "cif" not in output_files:
-          print(f"    Warning: No CIF for model_{model_idx}, skipping")
-          continue
-
-        result = boltz_oracle._parse_output(output_files, chains)
-        results.append(result)
-      except Exception as exc:
-        print(f"    Warning: Failed to parse model_{model_idx}: {exc}")
-        continue
-
-    if not results:
-      raise RuntimeError("No valid Boltz samples could be parsed")
-
-    return results
+  # Legacy single-oracle path
+  folding_cfg = energy_cfg.get("folding_oracle", {}) or {}
+  oracle_type = folding_cfg.get("type", "ESMFold")
+  kwargs = folding_cfg.get("kwargs", {}) or {}
+  if not isinstance(kwargs, dict):
+    raise ValueError("folding_oracle.kwargs must be a dictionary.")
+  return {"default": _instantiate_folding_oracle(oracle_type, kwargs, force_modal=force_modal)}
 
 
-def _find_boltz_model_files(out_dir: Path, model_idx: int) -> Dict[str, Path]:
-  """
-  Find Boltz output files for a specific model index.
-
-  Unlike BAGEL's _find_output_files which only returns the first match,
-  this finds files for a specific model_idx (e.g., *_model_2.cif).
-  """
-  files: Dict[str, Path] = {}
-
-  # Find CIF file for this model
-  cif_pattern = f"*_model_{model_idx}.cif"
-  cif_files = list(out_dir.rglob(cif_pattern))
-  cif_files = [f for f in cif_files if not any(
-    f.name.startswith(p) for p in ("pae_", "plddt_", "confidence_")
-  )]
-  if cif_files:
-    files["cif"] = cif_files[0]
-
-  # Find PAE NPZ for this model
-  pae_files = list(out_dir.rglob(f"pae_*_model_{model_idx}.npz"))
-  if pae_files:
-    files["pae"] = pae_files[0]
-
-  # Find pLDDT NPZ for this model
-  plddt_files = list(out_dir.rglob(f"plddt_*_model_{model_idx}.npz"))
-  if plddt_files:
-    files["plddt"] = plddt_files[0]
-
-  # Find confidence JSON for this model
-  conf_files = list(out_dir.rglob(f"confidence_*_model_{model_idx}.json"))
-  if conf_files:
-    files["confidence"] = conf_files[0]
-
-  return files
+def build_folding_oracle(energy_cfg: Dict[str, Any], force_modal: bool = False) -> FoldingOracle:
+  """Legacy single-oracle helper. Returns the first oracle from
+  :func:`build_folding_oracles` (for backwards compatibility with code paths
+  that still expect a single oracle object)."""
+  oracles = build_folding_oracles(energy_cfg, force_modal=force_modal)
+  return next(iter(oracles.values()))
 
 
 def parse_residue_range_string(spec: str) -> List[int]:
@@ -1551,6 +1473,33 @@ def _collect_target_sequences(
         f"  Target for energy entry {i}: PDB {pdb_code} chain {target_chain_id} "
         f"({len(seq)} residues)"
       )
+
+  # ------------------------------------------------------------------
+  # Second pass: propagate discovered target sequences to entries that
+  # reference the same chain_ID in their `residues` dict but do not
+  # specify `target`/`target_pdb_code` themselves.  This lets
+  # chain-free energies (PAEEnergy, SeparationEnergy, LISEnergy, …) be
+  # used in multi-chain configs without repeating the target sequence.
+  # ------------------------------------------------------------------
+  if targets:
+    target_by_chain_id: Dict[str, str] = {}
+    for _, (seq, cid) in targets.items():
+      target_by_chain_id.setdefault(cid, seq)
+
+    for i, entry in enumerate(energies_spec):
+      if not isinstance(entry, dict) or i in targets:
+        continue
+      kwargs = entry.get("kwargs", {}) or {}
+      residues_spec = kwargs.get("residues", {})
+      if not isinstance(residues_spec, dict):
+        continue
+      non_gen_keys = [k for k in residues_spec if k != "GEN"]
+      if len(non_gen_keys) != 1:
+        continue
+      target_chain_id = non_gen_keys[0]
+      if target_chain_id in target_by_chain_id:
+        targets[i] = (target_by_chain_id[target_chain_id], target_chain_id)
+
   return targets
 
 
@@ -1587,17 +1536,32 @@ def _convert_residue_spec_for_chains(
 
 def build_energy_terms_for_chain(
   energy_cfg: Dict[str, Any],
-  oracle: FoldingOracle,
+  oracle: FoldingOracle | Dict[str, FoldingOracle],
   chain: bg.Chain,
   target_chains: Dict[int, "bg.Chain"] | None = None,
 ) -> List[bg.energies.EnergyTerm]:
   """
   Instantiate BAGEL EnergyTerm objects for a given chain, based on the
   energy YAML configuration.
+
+  ``oracle`` may be either a single :class:`FoldingOracle` (legacy,
+  single-oracle mode) or a ``dict[str, FoldingOracle]`` mapping oracle
+  names to instances (multi-oracle mode). In multi-oracle mode, each energy
+  entry may specify which oracle to use via the top-level ``oracle`` key
+  (not inside ``kwargs``). Entries without an ``oracle`` key fall back to
+  the first oracle in the dict.
   """
   energies_spec = energy_cfg.get("energies", [])
   if not isinstance(energies_spec, list):
     raise ValueError("energy_config must contain an 'energies' list.")
+
+  # Normalise `oracle` arg to a dict; keep a "primary" reference for fallback.
+  if isinstance(oracle, dict):
+    oracles_by_name = oracle
+    primary_oracle = next(iter(oracles_by_name.values()))
+  else:
+    oracles_by_name = {"default": oracle}
+    primary_oracle = oracle
 
   terms: List[bg.energies.EnergyTerm] = []
   for entry_idx, entry in enumerate(energies_spec):
@@ -1606,6 +1570,19 @@ def build_energy_terms_for_chain(
     etype = entry.get("type")
     if not isinstance(etype, str):
       raise ValueError(f"Energy 'type' must be a string, got {etype!r}")
+
+    # Resolve which folding oracle instance this energy term should use.
+    # Precedence: entry['oracle'] (name lookup) > primary oracle.
+    oracle_name = entry.get("oracle")
+    if oracle_name is not None:
+      if oracle_name not in oracles_by_name:
+        raise ValueError(
+          f"Energy entry {entry_idx} ({etype}): oracle {oracle_name!r} not found. "
+          f"Available oracles: {list(oracles_by_name.keys())}"
+        )
+      this_oracle = oracles_by_name[oracle_name]
+    else:
+      this_oracle = primary_oracle
 
     kwargs = dict(entry.get("kwargs", {}) or {})
 
@@ -1712,7 +1689,7 @@ def build_energy_terms_for_chain(
         "Ensure it matches a class name in bagel.energies."
       ) from e
 
-    term = energy_cls(oracle=oracle, **kwargs)
+    term = energy_cls(oracle=this_oracle, **kwargs)
     terms.append(term)
 
   return terms
@@ -1721,11 +1698,10 @@ def build_energy_terms_for_chain(
 def evaluate_sequences_with_bagel(
   sequences: Sequence[str],
   energy_cfg: Dict[str, Any],
-  folding_oracle: FoldingOracle,
+  folding_oracle: FoldingOracle | Dict[str, FoldingOracle],
   cycle_index: int,
   cycle_dir: Path,
   enforce_template: bool = True,
-  boltz_ensemble_n: int = 1,
   save_structures: bool = False,
 ) -> Tuple[List[float], List[Dict[str, Any]], List[Any]]:
   """
@@ -1734,21 +1710,41 @@ def evaluate_sequences_with_bagel(
   configured energy terms, and — when a folding oracle was invoked — save
   the predicted structures for later export.
 
-  The folding oracle is only called when at least one energy term requires
-  a FoldingOracle; otherwise no structure prediction is performed and no
-  CIF files are written.
+  ``folding_oracle`` may be either a single :class:`FoldingOracle` (legacy)
+  or a ``dict[str, FoldingOracle]`` mapping oracle names to instances.  In
+  multi-oracle mode, each energy entry is bound to a specific oracle (see
+  :func:`build_energy_terms_for_chain`), and each sequence is folded by
+  every oracle that any active energy term references.  Results from all
+  oracles are merged into a single ``OraclesResultDict`` for energy
+  computation.
 
-  When boltz_ensemble_n > 1, run folding N times per sequence and average
-  the energy terms to reduce noise in the reward signal.
+  Folding oracles are only invoked when at least one energy term requires
+  one; otherwise no structure prediction is performed and no CIF files are
+  written.
+
+  Ensembling for Boltz2 is now handled **inside the Boltz oracle itself**
+  via the ``diffusion_samples`` kwarg (set on the oracle in the energy YAML).
+  The oracle runs ``boltz predict --diffusion_samples N`` in a single
+  subprocess call, parses all N outputs, and returns a single
+  ``BoltzResult`` whose scalar and tensor metrics are averaged across
+  samples.  For other oracles (Chai-1, AF2), use their own native
+  ensembling kwargs (e.g. ``num_diffn_samples`` for Chai-1).
 
   Returns:
     - energies: list of total energies, one per input sequence
     - details: list of dicts including per-sequence energy breakdown
-    - folding_results: list of FoldingResult objects (entries are None for
-      sequences where no folding oracle was needed)
+    - folding_results: list of FoldingResult objects from the primary
+      oracle (entries are None when no folding was needed)
   """
   from bagel.oracles import OraclesResultDict  # type: ignore
   from bagel.oracles.folding import FoldingOracle  # type: ignore
+
+  # Normalise oracle argument to a dict and pick a primary (first entry).
+  if isinstance(folding_oracle, dict):
+    oracles_by_name: Dict[str, FoldingOracle] = folding_oracle
+  else:
+    oracles_by_name = {"default": folding_oracle}
+  primary_oracle = next(iter(oracles_by_name.values()))
 
   # Pre-scan energy config for entries that require a target chain.
   target_seqs = _collect_target_sequences(energy_cfg)
@@ -1796,15 +1792,11 @@ def evaluate_sequences_with_bagel(
     })
 
   # ------------------------------------------------------------------
-  # Phase 2: Batch-predict structures for all sequences at once.
+  # Phase 2: Fold each sequence with every folding oracle it needs.
   #
-  # If the folding oracle supports predict_batch (e.g. Boltz) and every
-  # sequence needs it, we call it once instead of N times.  This loads
-  # the model once and processes all inputs sequentially, saving ~30 s
-  # of model-load overhead per additional sequence.
-  #
-  # When boltz_ensemble_n > 1, we run folding multiple times per sequence
-  # and average the energy terms to reduce noise.
+  # Ensembling (e.g. Boltz --diffusion_samples > 1) is handled inside the
+  # oracle itself: each oracle's .fold() method returns a single result
+  # (averaged over internal samples if applicable).
   # ------------------------------------------------------------------
 
   # Check which sequences need a folding oracle.
@@ -1813,61 +1805,69 @@ def evaluate_sequences_with_bagel(
     for d in per_seq_data
   ]
 
-  # For ensembling, we store a list of folding results per sequence
-  # batch_folding_results[i] = [result_1, result_2, ..., result_n] or None if all failed
+  # Collect the set of folding oracles that are actually needed by any term,
+  # preserving the oracles_by_name insertion order.
+  used_oracles: Dict[str, FoldingOracle] = {}
+  for d in per_seq_data:
+    for o in d["oracles_needed"]:
+      if isinstance(o, FoldingOracle):
+        for name, inst in oracles_by_name.items():
+          if inst is o and name not in used_oracles:
+            used_oracles[name] = inst
+  # Fallback: if energies don't reference the oracles by identity, use all.
+  if any(needs_folding) and not used_oracles:
+    used_oracles = dict(oracles_by_name)
+  primary_name = next(iter(used_oracles), None) if used_oracles else None
+
+  # Per-sequence, per-oracle folding results.  Each oracle contributes
+  # exactly one FoldingResult per sequence (any internal ensembling is
+  # absorbed inside the oracle and returned as a single averaged result).
+  #
+  #   batch_folding_results[i] = {oracle_name: FoldingResult} | None
+  #
+  # None means folding failed for that sequence on at least one oracle.
   batch_folding_results: List[Any] = [None] * len(sequences)
 
-  if any(needs_folding) and hasattr(folding_oracle, "predict_batch"):
-    # Collect the chain-lists that need folding.
+  if any(needs_folding) and primary_name is not None:
     batch_indices = [i for i, nf in enumerate(needs_folding) if nf]
     batch_chains = [per_seq_data[i]["all_chains"] for i in batch_indices]
 
-    # Check if we can use the efficient --diffusion_samples path (Boltz only)
-    is_boltz = isinstance(folding_oracle, Boltz)
+    if len(used_oracles) > 1:
+      print(f"  Multi-oracle evaluation: {list(used_oracles.keys())}")
 
-    if boltz_ensemble_n > 1 and is_boltz:
-      print(f"  Running Boltz with --diffusion_samples {boltz_ensemble_n} (efficient ensemble)...")
-    elif boltz_ensemble_n > 1:
-      print(f"  Running {boltz_ensemble_n}x folding ensemble for noise reduction...")
-
-    # Fold each sequence
-    for i, chains in zip(batch_indices, batch_chains):
+    def _clear_gpu_mem():
+      """Free any cached GPU memory between oracle calls to avoid OOM when
+      stacking multiple large models (e.g. Chai-1 after Boltz in the same
+      process)."""
+      import gc as _gc
       try:
-        if boltz_ensemble_n > 1 and is_boltz:
-          # Use efficient --diffusion_samples path for Boltz
-          ensemble_results = run_boltz_ensemble(
-            boltz_oracle=folding_oracle,
-            chains=chains,
-            n_samples=boltz_ensemble_n,
-            seed=None,  # Use internal randomness for diversity
-          )
-        elif boltz_ensemble_n > 1:
-          # Non-Boltz oracle: loop N times
-          ensemble_results = []
-          for ensemble_idx in range(boltz_ensemble_n):
-            try:
-              result = folding_oracle.predict(chains=chains)
-              ensemble_results.append(result)
-            except Exception as exc:
-              if ensemble_idx == 0:
-                print(f"  Sequence {i}: folding failed ({exc}); will assign inf energy")
-        else:
-          # Single sample
-          ensemble_results = [folding_oracle.predict(chains=chains)]
+        import torch as _torch
+        if _torch.cuda.is_available():
+          _torch.cuda.empty_cache()
+      except Exception:
+        pass
+      _gc.collect()
 
-        if ensemble_results:
-          batch_folding_results[i] = ensemble_results
-        else:
-          batch_folding_results[i] = None
-      except Exception as exc:
-        print(f"  Sequence {i}: folding failed ({exc}); will assign inf energy")
-        batch_folding_results[i] = None
+    for i, chains in zip(batch_indices, batch_chains):
+      per_oracle_results: Dict[str, Any] = {}
+      fold_failed = False
+
+      for name, oracle_inst in used_oracles.items():
+        _clear_gpu_mem()
+        try:
+          per_oracle_results[name] = oracle_inst.predict(chains=chains)
+        except Exception as exc:
+          print(f"  Sequence {i}: oracle {name!r} folding failed ({exc})")
+          fold_failed = True
+          break
+
+      batch_folding_results[i] = None if fold_failed else per_oracle_results
 
   # ------------------------------------------------------------------
   # Phase 3: Compute energies using the (pre-computed) oracle results.
-  #
-  # When ensembling, we compute energies for each folding result and
-  # average them to get a more stable energy estimate.
+  # Each oracle contributed exactly one FoldingResult per sequence; any
+  # internal ensembling (e.g. Boltz diffusion_samples) is already absorbed
+  # into a single averaged result by the oracle itself.
   # ------------------------------------------------------------------
   energies: List[float] = []
   details: List[Dict[str, Any]] = []
@@ -1877,113 +1877,91 @@ def evaluate_sequences_with_bagel(
     d = per_seq_data[idx]
     energy_terms = d["energy_terms"]
 
-    # Check if we have ensemble results
-    ensemble_results = batch_folding_results[idx]
-    if ensemble_results is None:
-      # No folding results available
-      if needs_folding[idx]:
-        print(f"  Sequence {idx}: batch_folding_results is None, marking as folding_failed")
-        energies.append(float("inf"))
-        folding_results.append(None)
-        details.append({"total_energy": float("inf"), "error": "folding_failed"})
-        continue
-
-    # For non-ensemble case, wrap single result in list for uniform handling
-    if not isinstance(ensemble_results, list):
-      ensemble_results = [ensemble_results] if ensemble_results is not None else []
-
-    if not ensemble_results and needs_folding[idx]:
+    per_oracle_results = batch_folding_results[idx]
+    if per_oracle_results is None and needs_folding[idx]:
+      print(f"  Sequence {idx}: folding failed, marking as folding_failed")
       energies.append(float("inf"))
       folding_results.append(None)
-      details.append({"total_energy": float("inf"), "error": "folding_failed"})
+      details.append({"energy": float("inf"), "error": "folding_failed"})
       continue
 
-    # Compute energies for each ensemble member and average
-    ensemble_energies: List[float] = []
-    ensemble_per_terms: List[Dict[str, float]] = []
-    best_folding_result = None
-    best_energy = float("inf")
+    if per_oracle_results is None:
+      # No folding needed for this sequence.
+      per_oracle_results = {}
 
-    for ens_idx, ens_result in enumerate(ensemble_results):
-      oracles_result = OraclesResultDict()
-      folding_failed = False
+    # Build OraclesResultDict: one folding result per oracle, plus any
+    # non-folding oracles called inline.
+    oracles_result = OraclesResultDict()
+    non_folding_failed = False
 
-      for oracle in d["oracles_needed"]:
-        if isinstance(oracle, FoldingOracle):
-          oracles_result[oracle] = ens_result
-        else:
-          # Non-folding oracle — call sequentially.
-          try:
-            result = oracle.predict(chains=d["all_chains"])
-            oracles_result[oracle] = result
-          except Exception as exc:
-            print(f"  Sequence {idx} ensemble {ens_idx}: non-folding oracle {type(oracle).__name__} failed: {exc}")
-            folding_failed = True
+    for oracle in d["oracles_needed"]:
+      if isinstance(oracle, FoldingOracle):
+        matched_name = None
+        for name, inst in used_oracles.items():
+          if inst is oracle:
+            matched_name = name
             break
-
-      if folding_failed:
-        continue
-
-      # Compute energy for this ensemble member
-      total_energy = 0.0
-      per_term: Dict[str, float] = {}
-      term_failed = False
-
-      for term in energy_terms:
+        if matched_name is None or matched_name not in per_oracle_results:
+          print(f"  Sequence {idx}: no result for oracle {type(oracle).__name__}")
+          non_folding_failed = True
+          break
+        oracles_result[oracle] = per_oracle_results[matched_name]
+      else:
         try:
-          unweighted, weighted = term.compute(oracles_result=oracles_result)
-          per_term[term.name] = float(unweighted)
-          total_energy += float(weighted)
-        except (ValueError, Exception) as exc:
-          if not enforce_template:
-            per_term[term.name] = float("inf")
-            total_energy = float("inf")
-            term_failed = True
-            break
-          else:
-            raise
+          oracles_result[oracle] = oracle.predict(chains=d["all_chains"])
+        except Exception as exc:
+          print(f"  Sequence {idx}: non-folding oracle {type(oracle).__name__} failed: {exc}")
+          non_folding_failed = True
+          break
 
-      if not term_failed and total_energy < float("inf"):
-        ensemble_energies.append(total_energy)
-        ensemble_per_terms.append(per_term)
-        if total_energy < best_energy:
-          best_energy = total_energy
-          best_folding_result = ens_result
-
-    # Average the ensemble energies
-    if ensemble_energies:
-      avg_energy = sum(ensemble_energies) / len(ensemble_energies)
-
-      # Average the per-term energies
-      avg_per_term: Dict[str, float] = {}
-      all_term_names = set()
-      for pt in ensemble_per_terms:
-        all_term_names.update(pt.keys())
-      for term_name in all_term_names:
-        term_values = [pt.get(term_name, 0.0) for pt in ensemble_per_terms if term_name in pt]
-        if term_values:
-          avg_per_term[term_name] = sum(term_values) / len(term_values)
-
-      energies.append(avg_energy)
-      folding_results.append(best_folding_result)  # Keep the best structure for visualization
-
-      detail_entry = {
-        "index": idx,
-        "sequence": seq,
-        "energy": avg_energy,
-        "energy_terms": avg_per_term,
-      }
-      if len(ensemble_energies) > 1:
-        detail_entry["ensemble_n"] = len(ensemble_energies)
-        detail_entry["ensemble_energies"] = ensemble_energies
-        detail_entry["ensemble_min"] = float(np.min(ensemble_energies))
-        detail_entry["ensemble_max"] = float(np.max(ensemble_energies))
-        detail_entry["ensemble_std"] = float(np.std(ensemble_energies))
-      details.append(detail_entry)
-    else:
+    if non_folding_failed:
       energies.append(float("inf"))
       folding_results.append(None)
-      details.append({"total_energy": float("inf"), "error": "all_ensemble_failed"})
+      details.append({"energy": float("inf"), "error": "oracle_failed"})
+      continue
+
+    # Compute weighted energy across all energy terms.
+    total_energy = 0.0
+    per_term: Dict[str, float] = {}
+    term_failed = False
+
+    for term in energy_terms:
+      try:
+        unweighted, weighted = term.compute(oracles_result=oracles_result)
+        per_term[term.name] = float(unweighted)
+        total_energy += float(weighted)
+      except Exception as exc:
+        if not enforce_template:
+          print(
+            f"  Sequence {idx}: term {term.name} ({type(term).__name__}) "
+            f"raised {type(exc).__name__}: {exc}"
+          )
+          per_term[term.name] = float("inf")
+          total_energy = float("inf")
+          term_failed = True
+          break
+        else:
+          raise
+
+    if term_failed or total_energy >= float("inf"):
+      energies.append(float("inf"))
+      folding_results.append(None)
+      details.append({"energy": float("inf"), "error": "energy_term_failed"})
+      continue
+
+    # Pick the primary oracle's structure for saving / visualisation.
+    primary_fr = None
+    if primary_name is not None and primary_name in per_oracle_results:
+      primary_fr = per_oracle_results[primary_name]
+
+    energies.append(total_energy)
+    folding_results.append(primary_fr)
+    details.append({
+      "index": idx,
+      "sequence": seq,
+      "energy": total_energy,
+      "energy_terms": per_term,
+    })
 
   # Save structures for sequences where the folding oracle was called.
   if save_structures and any(fr is not None for fr in folding_results):
@@ -2003,6 +1981,49 @@ def evaluate_sequences_with_bagel(
 # ---------------------------------------------------------------------------
 # Main pipeline loop
 # ---------------------------------------------------------------------------
+
+
+def _save_and_log_best_structure(
+  folding_result: Any,
+  output_dir: Path,
+  wandb_run: Any,
+  cycle: int,
+  energy: float,
+  sequence: str,
+  name: str,
+) -> None:
+  """Persist the campaign-best predicted structure to disk and log it to wandb.
+
+  Called from the elitism/new-best check.  Overwrites
+  ``<output_dir>/best_structure.cif`` in place so only one CIF is ever kept
+  on disk, no matter how many cycles run.  When wandb is active, logs the
+  same CIF as ``best/structure`` via :class:`wandb.Molecule`, which renders
+  as an interactive 3D viewer on the run page.  The logging cadence is
+  bounded by how often a new best is accepted (so wandb isn't spammed).
+
+  Failures are non-fatal — a warning is printed and the pipeline continues.
+  """
+  if folding_result is None or not hasattr(folding_result, "to_cif"):
+    return
+  best_cif_path = output_dir / "best_structure.cif"
+  try:
+    folding_result.to_cif(best_cif_path)
+  except Exception as exc:
+    print(f"  Warning: failed to save best structure: {exc}")
+    return
+  if wandb_run is None:
+    return
+  try:
+    import wandb
+    wandb.log({
+      "best/structure": wandb.Molecule(str(best_cif_path)),
+      "best/energy": float(energy),
+      "best/cycle": int(cycle),
+      "best/sequence": sequence,
+      "best/name": name,
+    }, step=cycle)
+  except Exception as exc:
+    print(f"  Warning: failed to log best structure to wandb: {exc}")
 
 
 def _collect_checkpoint_results(cfg: PipelineConfig) -> Dict[str, Any]:
@@ -2114,9 +2135,13 @@ def run_pipeline(
   else:
     print(f"Proposal method: {cfg.proposal_method} (max_mutations={cfg.max_mutations})")
 
-  # Load energy configuration & instantiate BAGEL folding oracle.
+  # Load energy configuration & instantiate BAGEL folding oracle(s).
+  # Multi-oracle mode activates when energy_cfg uses `folding_oracles:` (plural).
   energy_cfg = load_energy_config(cfg.energy_config)
-  folding_oracle = build_folding_oracle(energy_cfg, force_modal=force_modal_folding)
+  folding_oracles = build_folding_oracles(energy_cfg, force_modal=force_modal_folding)
+  folding_oracle = next(iter(folding_oracles.values()))  # legacy single-oracle handle
+  if len(folding_oracles) > 1:
+    print(f"Multi-oracle mode: {list(folding_oracles.keys())}")
 
   # GRPO online RL fine-tuning (optional)
   grpo_step = None
@@ -2125,7 +2150,6 @@ def run_pipeline(
     grpo_config = GRPOConfig(
       enabled=True,
       grpo_beta=cfg.grpo_beta,
-      grpo_group_size=cfg.grpo_group_size,
       grpo_clip_ratio=cfg.grpo_clip_ratio,
       grpo_lr=cfg.grpo_lr,
       grpo_weight_decay=cfg.grpo_weight_decay,
@@ -2146,7 +2170,7 @@ def run_pipeline(
     # Encoder-decoder split: frozen encoder computes prompt KV cache,
     # trainable decoder processes completions and receives GRPO updates.
     profam_model.init_encoder_decoder_grpo()
-    print(f"GRPO enabled: lr={cfg.grpo_lr}, group_size={cfg.grpo_group_size}, "
+    print(f"GRPO enabled: lr={cfg.grpo_lr}, "
           f"every {cfg.rl_every_n_cycles} cycles, {cfg.rl_steps_per_cycle} steps/cycle")
     print("  Encoder-decoder mode: frozen encoder for prompt, trainable decoder for completions")
 
@@ -2171,21 +2195,8 @@ def run_pipeline(
   likelihood_best: List[Tuple[float, str, torch.Tensor]] = []
   likelihood_worst: List[Tuple[float, str, torch.Tensor]] = []
 
-  # Validate Thompson reward term exists in the energy config.
-  if cfg.selection_strategy == "thompson":
-    energy_term_types = [e["type"] for e in energy_cfg.get("energies", [])]
-    # The term name in evaluation details is derived from the BAGEL class name
-    # minus the "Energy" suffix (e.g. ipSAEEnergy → ipSAE). Check that at least
-    # one term type contains the reward term name.
-    reward_term_found = any(
-      cfg.thompson_reward_term in t for t in energy_term_types
-    )
-    if not reward_term_found:
-      raise ValueError(
-        f"thompson_reward_term='{cfg.thompson_reward_term}' not found among "
-        f"energy term types {energy_term_types}. The reward term name must "
-        f"match a key in the 'energy_terms' dict produced by evaluation."
-      )
+  # Thompson reward signal is always the composite weighted total energy
+  # (lower is better).  No per-term validation is required.
 
   rng = np.random.default_rng(cfg.random_seed)
   cycle_log_path = cfg.output_dir / "cycle_stats.json"
@@ -2281,12 +2292,11 @@ def run_pipeline(
     selection_manager = SelectionManager(
       thompson_sampler=thompson_sampler,
       prompt_selector=prompt_selector,
-      reward_term=cfg.thompson_reward_term,
       max_arms=cfg.thompson_max_arms,
       max_identity=cfg.thompson_max_identity,
     )
     print(f"  SelectionManager: selector={prompt_selector.method_name}, "
-          f"reward_term={cfg.thompson_reward_term}, max_arms={cfg.thompson_max_arms}")
+          f"reward=total_energy, max_arms={cfg.thompson_max_arms}")
 
   # Sequence deduplication cache: maps sequence string → (energy, details_dict).
   # Populated during evaluation; checked before folding to skip duplicates.
@@ -2302,11 +2312,10 @@ def run_pipeline(
       seed_energies, seed_details, seed_folding_results = evaluate_sequences_with_bagel(
         sequences=base_initial_seqs,
         energy_cfg=energy_cfg,
-        folding_oracle=folding_oracle,
+        folding_oracle=folding_oracles,
         cycle_index=0,
         cycle_dir=cfg.output_dir / "cycle_000_seed",
         enforce_template=cfg.enforce_template,
-        boltz_ensemble_n=cfg.boltz_ensemble_n,
         save_structures=cfg.save_structures,
       )
       seed_best_idx = int(np.argmin(seed_energies))
@@ -2322,7 +2331,7 @@ def run_pipeline(
       print(f"  Seed folding failed, regenerating random sequence (len={rand_len})")
     print(f"  Seed sequence best energy: {seed_best_energy:.4f}")
     if seed_details[seed_best_idx] and isinstance(seed_details[seed_best_idx], dict):
-      terms = {k: v for k, v in seed_details[seed_best_idx].items() if k != "total_energy"}
+      terms = seed_details[seed_best_idx].get("energy_terms", {})
       print(f"  Seed energy terms: {terms}")
     # Log seed baseline as cycle 0 in cycle_stats.json.
     seed_entry = {
@@ -2334,7 +2343,7 @@ def run_pipeline(
         "sequence": base_initial_seqs[seed_best_idx],
         "energy": seed_best_energy,
         "energy_terms": (
-          {k: v for k, v in seed_details[seed_best_idx].items() if k != "total_energy"}
+          seed_details[seed_best_idx].get("energy_terms", {})
           if seed_details[seed_best_idx] and isinstance(seed_details[seed_best_idx], dict)
           else {}
         ),
@@ -2359,6 +2368,18 @@ def run_pipeline(
       elite_name = base_initial_names[seed_best_idx]
       elite_cycle = 0
       print(f"  Initial elite set: energy={elite_energy:.4f}")
+      _save_and_log_best_structure(
+        folding_result=(
+          seed_folding_results[seed_best_idx]
+          if seed_best_idx < len(seed_folding_results) else None
+        ),
+        output_dir=cfg.output_dir,
+        wandb_run=wandb_run,
+        cycle=0,
+        energy=elite_energy,
+        sequence=elite_seq,
+        name=elite_name,
+      )
 
     # Cache seed sequences for deduplication.
     if cfg.deduplicate_sequences:
@@ -2381,26 +2402,30 @@ def run_pipeline(
       proposal_method="seed",
     )
 
-    # Register seed sequences as initial Thompson arms.
+    # Register seed sequences as initial Thompson arms.  Reward signal is the
+    # composite weighted total energy (lower = better).
     if thompson_sampler is not None:
       print(f"  Thompson SEED REGISTRATION (m_samples={thompson_sampler.m_samples}):")
-      seed_reward_values = extract_reward_term(seed_details, cfg.thompson_reward_term)
+      seed_reward_values = [
+        float(d.get("energy", float("inf"))) if isinstance(d, dict) else float("inf")
+        for d in seed_details
+      ]
       n_seed_registered = 0
       for i, (name, seq) in enumerate(zip(base_initial_names, base_initial_seqs)):
-        ipsae_val = seed_reward_values[i]
-        if math.isfinite(ipsae_val):
+        energy_val = seed_reward_values[i]
+        if math.isfinite(energy_val):
           arm = thompson_sampler.add_arm(
-            sequence=seq, name=name, ipsae_raw=ipsae_val,
+            sequence=seq, name=name, ipsae_raw=energy_val,
             parent_arm_id=None, cycle=0,
           )
           n_seed_registered += 1
           print(f"    arm {arm.arm_id}: {name}, "
-                f"{cfg.thompson_reward_term}={ipsae_val:.4f}, "
+                f"energy={energy_val:.4f}, "
                 f"reward={arm.reward:.4f}, "
                 f"α={arm.alpha:.4f}, β={arm.beta_param:.4f}, "
                 f"seq_len={len(seq)}")
         else:
-          print(f"    SKIPPED {name}: {cfg.thompson_reward_term}=inf (folding failure)")
+          print(f"    SKIPPED {name}: energy=inf (folding failure)")
       print(f"  Thompson: {n_seed_registered}/{len(base_initial_seqs)} seeds registered as arms")
 
       # Prune to top-K diverse arms if configured.
@@ -2424,7 +2449,7 @@ def run_pipeline(
         )
         thompson_sampler._last_selected_arm_id = best_seed_arm.arm_id  # type: ignore[attr-defined]
         print(f"  Thompson: initial parent set to arm {best_seed_arm.arm_id} "
-              f"({best_seed_arm.name}, ipSAE={best_seed_arm.ipsae_raw:.4f})")
+              f"({best_seed_arm.name}, energy={best_seed_arm.ipsae_raw:.4f})")
       # Save initial arms state.
       arms_path = cfg.output_dir / "thompson_arms.json"
       with arms_path.open("w") as f:
@@ -2752,12 +2777,11 @@ def run_pipeline(
         novel_energies, novel_details, novel_folding = evaluate_sequences_with_bagel(
           sequences=novel_seqs,
           energy_cfg=energy_cfg,
-          folding_oracle=folding_oracle,
+          folding_oracle=folding_oracles,
           cycle_index=cycle,
           cycle_dir=cycle_dir,
           enforce_template=cfg.enforce_template,
-          boltz_ensemble_n=cfg.boltz_ensemble_n,
-          save_structures=cfg.save_structures,
+            save_structures=cfg.save_structures,
         )
 
         # Merge results: novel gets fresh evaluation, duplicates get cached.
@@ -2783,12 +2807,11 @@ def run_pipeline(
         energies, details, folding_results = evaluate_sequences_with_bagel(
           sequences=gen_seqs,
           energy_cfg=energy_cfg,
-          folding_oracle=folding_oracle,
+          folding_oracle=folding_oracles,
           cycle_index=cycle,
           cycle_dir=cycle_dir,
           enforce_template=cfg.enforce_template,
-          boltz_ensemble_n=cfg.boltz_ensemble_n,
-          save_structures=cfg.save_structures,
+            save_structures=cfg.save_structures,
         )
 
       # When enforce_template is False, sequences with template mismatches
@@ -2865,6 +2888,18 @@ def run_pipeline(
       elite_name = gen_names[cycle_best_idx]
       elite_cycle = cycle
       print(f"  New global elite: energy={elite_energy:.4f} (cycle {elite_cycle})")
+      _save_and_log_best_structure(
+        folding_result=(
+          folding_results[cycle_best_idx]
+          if cycle_best_idx < len(folding_results) else None
+        ),
+        output_dir=cfg.output_dir,
+        wandb_run=wandb_run,
+        cycle=cycle,
+        energy=elite_energy,
+        sequence=elite_seq,
+        name=elite_name,
+      )
 
     # ---- Likelihood tracking: update best/worst sequence pools ----
     if cfg.likelihood_eval_every > 0 and grpo_token_data is not None:
@@ -3081,7 +3116,7 @@ def run_pipeline(
           grpo_step.optimizer.step()
           rl_metrics["grad_norm"] = grad_norm.item() if isinstance(grad_norm, torch.Tensor) else float(grad_norm)
           rl_metrics["lr"] = grpo_step.optimizer.param_groups[0]["lr"]
-          rl_metrics["grpo_group_size"] = n_total
+          rl_metrics["grpo_effective_group_size"] = n_total
           rl_metrics["grpo_cached_seqs"] = n_cached
           print(f"  GRPO step {rl_step_i}: loss={rl_metrics.get('grpo_loss', 0):.4f}, "
                 f"clip_frac={rl_metrics.get('clip_fraction', 0):.3f}, "
@@ -3281,7 +3316,7 @@ def run_pipeline(
           print(f"    before: α={update_stats['alpha_before']:.4f}, "
                 f"β={update_stats['beta_before']:.4f}")
           print(f"    best progeny: idx={update_stats['best_progeny_idx']}, "
-                f"{selection_manager.reward_term}={update_stats['best_progeny_ipsae']:.4f}, "
+                f"energy={update_stats['best_progeny_ipsae']:.4f}, "
                 f"reward={update_stats['progeny_reward']:.4f}")
           print(f"    after:  α={update_stats['alpha_after']:.4f}, "
                 f"β={update_stats['beta_after']:.4f}, "
@@ -3377,7 +3412,11 @@ def run_pipeline(
         json.dump(selection_manager.thompson_sampler.get_state_dict(), f, indent=2)
 
       # Save per-cycle thompson decision log (append, one entry per cycle).
-      reward_values_for_log = extract_reward_term(details, selection_manager.reward_term)
+      # Reward signal is always the composite weighted total energy.
+      reward_values_for_log = [
+        float(d.get("energy", float("inf"))) if isinstance(d, dict) else float("inf")
+        for d in details
+      ]
       decision_log_path = cfg.output_dir / "thompson_decisions.jsonl"
       decision_entry: Dict[str, Any] = {
         "cycle": cycle,

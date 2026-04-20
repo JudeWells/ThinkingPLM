@@ -1,0 +1,80 @@
+## Multi-oracle smoke test: Boltz2 + Chai-1 + AF2BindCraft
+##
+## Excludes ESMFold to keep in-process GPU memory low for dev machine testing.
+## Verifies the multi-oracle pipeline wiring (chain dispatch, result merging,
+## per-term oracle resolution).
+
+folding_oracles:
+  boltz2:
+    type: Boltz
+    kwargs: {}
+  chai1:
+    type: Chai1
+    kwargs:
+      num_diffn_samples: 1
+      num_diffn_timesteps: 50
+      num_trunk_recycles: 1
+      use_esm_embeddings: false
+      use_msa_server: false
+  af2:
+    type: AF2BindCraft
+    kwargs:
+      target_pdb: /mnt/disk2/ThinkingPLM/target_pdbs/2GDZ.pdb
+      target_chain: A
+      conda_env: BindCraft
+      af_params_dir: /mnt/disk2/BindCraft/params
+      num_recycles: 1
+      prediction_models: [0]
+
+energies:
+  # --- Boltz2 metrics ---
+  - type: ipSAEEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.25
+      pae_cutoff: 10.0
+      name: b2
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.05
+      name: b2
+  - type: PLDDTEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.025
+      name: b2
+      residues:
+        GEN: "all"
+
+  # --- Chai-1 metrics ---
+  - type: iPTMEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.05
+      name: chai
+  - type: PLDDTEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.025
+      name: chai
+      residues:
+        GEN: "all"
+
+  # --- AF2 BindCraft metrics ---
+  - type: iPTMEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.05
+      name: af2
+  - type: PLDDTEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.025
+      name: af2
+      residues:
+        GEN: "all"

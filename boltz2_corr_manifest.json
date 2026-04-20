@@ -1,0 +1,1802 @@
+[
+  {
+    "name": "2GDZ_top20_00",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MLKLNLEGAIHITKAFLPLLKKNDSPIVVNISSGAGLIPIPYYATYCASKAALHMFSDTLRVELKPFGVKVVTV",
+    "binder_len": 74,
+    "total_energy": -0.8826909065246582,
+    "source_run": "scaffold_comparison_rep3/hairpin/bandit_bt",
+    "cycle": "298"
+  },
+  {
+    "name": "2GDZ_top20_01",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MINLNLIGTIKITRAFLPLMIKKKRGLIVNVSSGAGLIPIPYYATYCAGKAALHMFSDTLRVELKPFGVKVVTV",
+    "binder_len": 74,
+    "total_energy": -0.9021312713623046,
+    "source_run": "scaffold_comparison_rep3/hairpin/bandit_bt",
+    "cycle": "80"
+  },
+  {
+    "name": "2GDZ_top20_02",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MINLNLIGTIKITRAFLPQMIKKKRGLIVNVSSGAGLIPIPYYATYCASKAALHMFSDTLRVELKPFGVKVVTV",
+    "binder_len": 74,
+    "total_energy": -0.9049340009689331,
+    "source_run": "scaffold_comparison_rep3/hairpin/bandit_bt",
+    "cycle": "76"
+  },
+  {
+    "name": "2GDZ_top20_03",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MVTNTVGIVKTTRAVIPLMKKGDKGVVVNIASISGLSPIALYSVYSASKAAVVSFSDSLRVELKPFNINVLCVK",
+    "binder_len": 74,
+    "total_energy": -0.8773465931415558,
+    "source_run": "scaffold_comparison_rep3/hairpin/proposal_bandit",
+    "cycle": "573"
+  },
+  {
+    "name": "2GDZ_top20_04",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "RCWWWLKILQINLFRVIAITQAGHDYMSSQTGIEGGTIINMSSLCGHKPSAMMPAYCSSHHGIVGFTRSARDAASLMGTGVR",
+    "binder_len": 82,
+    "total_energy": -0.8951859891414642,
+    "source_run": "scaffold_comparison_rep3/hairpin/random_greedy",
+    "cycle": "2618"
+  },
+  {
+    "name": "2GDZ_top20_05",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "RCWWWLKILQINLFRAIAITQAGHDYMSSQTGIEGGTIINMSSLCGHQPSAMMPAYCASHHGIVGFTRSARMAAALMGTGVR",
+    "binder_len": 82,
+    "total_energy": -0.8960298061370849,
+    "source_run": "scaffold_comparison_rep3/hairpin/random_greedy",
+    "cycle": "4139"
+  },
+  {
+    "name": "2GDZ_top20_06",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "RCWWWLKMLQINLFRAIAITQAGHDYMSSQTGIEGGTIINMSSLCGHKPSAMMPAYCASHHGIVGFTRSARDAASLMGTGVR",
+    "binder_len": 82,
+    "total_energy": -0.8967511296272278,
+    "source_run": "scaffold_comparison_rep3/hairpin/random_greedy",
+    "cycle": "3678"
+  },
+  {
+    "name": "2GDZ_top20_07",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "RCEWWLYILQTNLFRAIAITQAGHDKMCSQTGIKGGVIINMSSLCGHQPSAMVPAYCASEHGIVGFTRSARDAANLMGTGVR",
+    "binder_len": 82,
+    "total_energy": -0.9009199798107147,
+    "source_run": "scaffold_comparison_rep3/hairpin/random_greedy",
+    "cycle": "5324"
+  },
+  {
+    "name": "2GDZ_top20_08",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MPDLSINTVSAVLLTKLLIPKLKRQKGATIVNIGSILGLFPLPFMPTYAATKWAVAGFTEALRLKLQPYGVKVSTL",
+    "binder_len": 76,
+    "total_energy": -0.8776834785938263,
+    "source_run": "scaffold_comparison_rep3/hairpin/bandit_grpo",
+    "cycle": "433"
+  },
+  {
+    "name": "2GDZ_top20_09",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MNINLVGTIKITRAFLPLMIKKKRGLIVNVSSGAGLIPIPYYATYCASKAALHMFSDTLRVELKPFGVKVVTV",
+    "binder_len": 73,
+    "total_energy": -0.9024112403392792,
+    "source_run": "scaffold_comparison_rep3/hairpin/bandit_bt",
+    "cycle": "444"
+  },
+  {
+    "name": "2GDZ_top20_10",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MFDITVNLLGTFNMTKSLISKMINQNKGVIINIGSIAGLCPVPLYSLYSASKASVISFSECDRIELKPFNVDVVCVK",
+    "binder_len": 77,
+    "total_energy": -0.8810178101062774,
+    "source_run": "scaffold_comparison_rep3/hairpin/proposal_bandit",
+    "cycle": "1556"
+  },
+  {
+    "name": "2GDZ_top20_11",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MVTNTVGIVKTTRAVIPKMKKGDKGVVVFIASISGLSPIALYSVYSASKAAVVSFSDSLRVELKPFNINVLCVK",
+    "binder_len": 74,
+    "total_energy": -0.8774056375026703,
+    "source_run": "scaffold_comparison_rep3/hairpin/proposal_bandit",
+    "cycle": "946"
+  },
+  {
+    "name": "2GDZ_top20_12",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MLVNAAGPAFTLTKDAIRYMKKQKGGKIVNISSVAGLIPSPLLPVYAATKWAVVGFTEALRLKLKSSGIRVATL",
+    "binder_len": 74,
+    "total_energy": -0.8535730838775635,
+    "source_run": "scaffold_comparison_rep3/hairpin/bandit_grpo",
+    "cycle": "445"
+  },
+  {
+    "name": "2GDZ_top20_13",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MFDITVNLLGTFNMTKSLISKMINQNKGVIINIGSIAGLCPDPLYSLYSASKASVISFSECLRIELKPFNVDVVCVK",
+    "binder_len": 77,
+    "total_energy": -0.8861637055873871,
+    "source_run": "scaffold_comparison_rep3/hairpin/proposal_bandit",
+    "cycle": "2468"
+  },
+  {
+    "name": "2GDZ_top20_14",
+    "target_id": "2GDZ",
+    "sample_type": "top20",
+    "binder_seq": "MESNLSGTITLTRAAIPYMKKQKGGKIVNISSVAGLIPSPLLPVYAATKWAVVGFTEALRLKLKSSGIRVATL",
+    "binder_len": 73,
+    "total_energy": -0.902984893321991,
+    "source_run": "scaffold_comparison_rep3/hairpin/bandit_grpo",
+    "cycle": "119"
+  },
+  {
+    "name": "2GDZ_random_15",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MSRLPSVFAVALYVVVCLAAAAAGFLPPDTRSLADGARAVLALAEAARARKRIERKPPRP",
+    "binder_len": 60,
+    "total_energy": -0.05423663854598999,
+    "source_run": "scaffold_comparison_rep3/affibody_2B87/proposal_bandit",
+    "cycle": "4034"
+  },
+  {
+    "name": "2GDZ_random_16",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "RCWWWEKILQINLFRVIAITQAGHDYMSSQTGIEGGTIINMSSLCGHKPSAMMPAYCASHHGIVGFTRSARDAAALMGTGVR",
+    "binder_len": 82,
+    "total_energy": -0.8957405686378479,
+    "source_run": "scaffold_comparison_rep3/hairpin/random_greedy",
+    "cycle": "1718"
+  },
+  {
+    "name": "2GDZ_random_17",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MKQINLSGTIALTRAAIPYMKKQKGGKIVNISSVAGLIPSPLLPVYAATKWAVVGFTEALRLKLKSSGIRVATL",
+    "binder_len": 74,
+    "total_energy": -0.896265172958374,
+    "source_run": "scaffold_comparison_rep3/hairpin/bandit_grpo",
+    "cycle": "223"
+  },
+  {
+    "name": "2GDZ_random_18",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MVTNTAGIVKTTRAVIPKMKKGDKGVVVNIASISGLSPIALYSVYSASKAAVVSFSDSLRVELKPFNINVLCVK",
+    "binder_len": 74,
+    "total_energy": -0.8767589151859283,
+    "source_run": "scaffold_comparison_rep3/hairpin/proposal_bandit",
+    "cycle": "368"
+  },
+  {
+    "name": "2GDZ_random_19",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "YDNQMNKALKITVKEIWNMPNLTDTQALAFLDALRKHPSQIAKLLATAKALNYLLSPE",
+    "binder_len": 58,
+    "total_energy": -0.21028854846954348,
+    "source_run": "scaffold_comparison_rep3/affibody_2B87/random_greedy",
+    "cycle": "4251"
+  },
+  {
+    "name": "2GDZ_random_20",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MSNKQDKELGWATWEIFNYPNLNGPQVKNFIDSLRDDPSQSANLLAEAKKLNKAQIPK",
+    "binder_len": 58,
+    "total_energy": -0.1941865488886833,
+    "source_run": "scaffold_comparison_rep3/affibody_2B87/bandit_bt",
+    "cycle": "29"
+  },
+  {
+    "name": "2GDZ_random_21",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MPSVPDAWYCPDCGPVMGTVDLRSRDGRKALRRTGDARALAALRRLADELC",
+    "binder_len": 51,
+    "total_energy": -0.04344470202922821,
+    "source_run": "scaffold_comparison_rep3/affibody_2B87/proposal_bandit",
+    "cycle": "3117"
+  },
+  {
+    "name": "2GDZ_random_22",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "RCWWWLKILQINLFRVIAITQAGHDYMSSQQGIEGGTIINMSSLCGHKPSAMMPAYCASHHGIVGFTRSARDAASLMGTGVR",
+    "binder_len": 82,
+    "total_energy": -0.8971695899963379,
+    "source_run": "scaffold_comparison_rep3/hairpin/random_greedy",
+    "cycle": "2340"
+  },
+  {
+    "name": "2GDZ_random_23",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MVVLRPVIFRLEAPQDKANVLVGIALLGGRATQGILQASEHPQVDDAWP",
+    "binder_len": 49,
+    "total_energy": -0.03316314816474915,
+    "source_run": "scaffold_comparison_rep3/affibody_2B87/proposal_bandit",
+    "cycle": "1742"
+  },
+  {
+    "name": "2GDZ_random_24",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "DWDKEIREKIEKEWEEEIEKEIEEEIKKESEKEENLEKLLRIINIISLIVQIISIILSIYGIVLSIIGIVWNWTTIASSIISIISSISSIISSIISIIS",
+    "binder_len": 99,
+    "total_energy": -0.2411579042673111,
+    "source_run": "scaffold_comparison_rep3/bindcraft_15PGDH/bandit_bt",
+    "cycle": "202"
+  },
+  {
+    "name": "2GDZ_random_25",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MSNYQAKDNQPGEWFVIAERQKPAKWYLAYLV",
+    "binder_len": 32,
+    "total_energy": -0.037179899215698246,
+    "source_run": "scaffold_comparison_rep3/beta_sheet_1E0L/proposal_bandit",
+    "cycle": "508"
+  },
+  {
+    "name": "2GDZ_random_26",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MNLAGIIQHEMIAQRKLIEAAATELEAALEADGTLPAFIAPLEWEARH",
+    "binder_len": 48,
+    "total_energy": -0.054654049873352054,
+    "source_run": "scaffold_comparison_rep3/affibody_2B87/proposal_bandit",
+    "cycle": "1126"
+  },
+  {
+    "name": "2GDZ_random_27",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "RLTRKIIDWFSCKEDWTKEIQIGIEEEIKKETEQAKWLNKLLGIINIINLIWQIISQILSIYGIVCSIVGIVWAWTTIASYIISIIQCFSSIISSMISIIS",
+    "binder_len": 101,
+    "total_energy": -0.20807762444019318,
+    "source_run": "scaffold_comparison_rep3/bindcraft_15PGDH/bandit_bt",
+    "cycle": "377"
+  },
+  {
+    "name": "2GDZ_random_28",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "KEELSEEQKTLKKKAEVVLSITEEWRETDMRGHWRTMQKKFDMPEEYVKMMEGVGEFVVETMKVYMEHEVTGKLLLETVPTLWESSVRPWMQPSMEATNEYNKKDFS",
+    "binder_len": 107,
+    "total_energy": -0.04972236752510071,
+    "source_run": "scaffold_comparison_rep3/bindcraft_15PGDH/random_greedy",
+    "cycle": "373"
+  },
+  {
+    "name": "2GDZ_random_29",
+    "target_id": "2GDZ",
+    "sample_type": "random",
+    "binder_seq": "MSDDDLAQQRRAELIIERAKEMRKTEMLEQWSQMKQQFGLPEDYAKLMEAIGEFVVQTMKLYLDHDATGKLNLEEVPALLERIIRPYMQPTMESTKEFNKKHGS",
+    "binder_len": 104,
+    "total_energy": -0.13862055689096453,
+    "source_run": "scaffold_comparison_rep3/bindcraft_15PGDH/bandit_grpo",
+    "cycle": "56"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_00",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "GPTPKVGVYGSGQDTKVVVWYPFSMEYPLEVYLYDKKTDDGWKFIFKMEPDYSEH",
+    "binder_len": 55,
+    "total_energy": -0.7595133304595947,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/random_greedy",
+    "cycle": "4258"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_01",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "PPVPKFSTYGKGHDQKMVMWTPFNMQYPLEVYLYDKSSDDGFKRIFKMDPDYSGM",
+    "binder_len": 55,
+    "total_energy": -0.6828111231327056,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/random_greedy",
+    "cycle": "929"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_02",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "KKVTPTSGSAYSPGTVQFTDTSSSGSGSSIASWTWPSGDGADSTQACPTHTATPAGTPTVGLTVSNSVGTDQAVATDYITVNTSAPTATFVSSTAGGYQPLTVQFTDTATGWPTSWYWIHWDGTTSTQQNPLHTYTDPGTYDVSLAASNSNGTDKNFKTGYI",
+    "binder_len": 162,
+    "total_energy": -0.5955107986927033,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/bandit_grpo",
+    "cycle": "215"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_03",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "MEWQLVESGGGLVAQGGPLEMSCSASGFRIRDEFILWRTQAPGKGLEWIAIIYPQTANEAYAQHHDGRMTISCDTRKHTAYQTTHSFRAEDRAVYYRERGGGEYFYTQDYNGQGTLVTVIS",
+    "binder_len": 121,
+    "total_energy": -0.6075154721736908,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/4D5/random_greedy",
+    "cycle": "4271"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_04",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "EILMLVESLGGDVAKGQNWSFSCVMSGSKSWINLLGWFQQYPGKIREGVASVSPAGGTTPYADSVKGRFTVSADNVANTVPLKQNDMKPTDSAVHWCGAASSMYDNPLNWYMYFKWGYGTQLFVVWDEC",
+    "binder_len": 129,
+    "total_energy": -0.621201503276825,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/random_greedy",
+    "cycle": "3289"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_05",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "EILMLVESLGGDVSLGDPWSFTCVMTGNKSWIGLLGWFLQYPGKIREGTCSVSSAGGAPVYATEYKGRFTVSVDNVANTVPLKIDDMKPTDSAVHWCGAASSMYDNPLNWYMYAKWGFGTQLFVVWDEC",
+    "binder_len": 129,
+    "total_energy": -0.6856768429279327,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/random_greedy",
+    "cycle": "4618"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_06",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "PPVPKFSTYGKGQDQKMVVWTPFNMQYPLEVYLYDQSSDDGFWRIFKMDPDYSGM",
+    "binder_len": 55,
+    "total_energy": -0.6553723275661468,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/random_greedy",
+    "cycle": "905"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_07",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "GPTPKVGVYGSGQDTKVAVWYPFSMEYPLEVYLYDKKTDDGFKFMFKMEPDYSEA",
+    "binder_len": 55,
+    "total_energy": -0.6082792639732361,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/random_greedy",
+    "cycle": "5167"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_08",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "GAVAQFATAGKGEDQKVVVWIPFSMEYPLEVYLYDKRTDDGFKQIFKMDPDYSGM",
+    "binder_len": 55,
+    "total_energy": -0.7366754949092865,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/random_greedy",
+    "cycle": "1260"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_09",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "GATPKVGIYGSGQDTKVFVWYPFSMEYPLEVYLYDKKTDDGFNFIFKMEPDYSEG",
+    "binder_len": 55,
+    "total_energy": -0.7419567942619324,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/random_greedy",
+    "cycle": "3799"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_10",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "KKVTPTSGSAYSPGTVQFTDTSSSGSGSSIASWTWPSGDGADSTQACPTHTATPAGTPTVALTVSNSVGTDQAVATDYITVNTSAPTATFVSSTAGGYQPLTVQFTDTATGWPTSWYWIHWDGTTSTQQNPLHTYTDPGTYDVSLAASNSNGTDKNTKTGYI",
+    "binder_len": 162,
+    "total_energy": -0.6019622325897217,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/bandit_grpo",
+    "cycle": "231"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_11",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "GPTPKVGVYGSGQDTKVAVWYPFSMEYPLEVYLYDKKTDDGFKFIGKMEPDYSEA",
+    "binder_len": 55,
+    "total_energy": -0.7401859402656555,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/random_greedy",
+    "cycle": "5278"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_12",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "KKVTPTSGSAYSPGTVQFTDTSSSGSGSSIASWTWPSGDGADSTQACPTHTATPAGTPTVGLTVSNSVGTDQAVATDYITVNTSAPTATFVSSTAGGYQPLTVQFTDLATGWPTSWYWIHWDGTTSTQQNPLHTYTDPGTYDVSLAASNSNGTDKNTKTGYI",
+    "binder_len": 162,
+    "total_energy": -0.6039282083511353,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/bandit_grpo",
+    "cycle": "380"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_13",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "MEWQLVESGGGLVPQGGPLELSCSASGFRIRDEFILWRTQAPGKGLEWVAMIYPQNAYEAYAQHVKGRMTISCDTIKHTAYQWTHSFRAEDRAVYYRERGGREYFYTQDYNGQGTLVTVIS",
+    "binder_len": 121,
+    "total_energy": -0.6064933240413666,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/4D5/random_greedy",
+    "cycle": "2009"
+  },
+  {
+    "name": "1TNF_TNF_alpha_top20_14",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "top20",
+    "binder_seq": "SEWQLVESGGGLVAQGGPLKMSCSSSGFEIIDEFILWRTQAPGKGLENIAIINPQTQNEAYAQHVEGRMTISVDTREHTAYQVTHSFRAEDRAVYYRERGGGSSFYNQDYNGQGTLVTVIS",
+    "binder_len": 121,
+    "total_energy": -0.532161432504654,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/4D5/random_greedy",
+    "cycle": "5320"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_15",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "MLYAAAFNDIDGVKKLLSAGADINVKDSNGNTPLIYAASKGNEEVIKYLLEKGANINAKNNDGKTALIFAAENGHLEVVKYLIEKGADINAKDNDGKTALMLAAENGHLEVVKYL",
+    "binder_len": 115,
+    "total_energy": -0.23523860275745392,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/ankyrin/bandit_grpo",
+    "cycle": "73"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_16",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "LYQQFGVGETHSNVQAHIDMFWQRGKQHWIWQYDDLSHGHAGPY",
+    "binder_len": 44,
+    "total_energy": -0.03364138007164002,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/bandit_grpo",
+    "cycle": "49"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_17",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "EILMLVESLGGDVNLGDPWSFSCVMSGNKSWIGLLGWFQQYPGKIREGTCSVSSAGGPHIYATEVKGRFTVSVDNVANTVPLKQDDMKPTDSAVHWCGAASSMYDNPLNWYMYAKWGFGTQLFVVWDEC",
+    "binder_len": 129,
+    "total_energy": -0.675930655002594,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/random_greedy",
+    "cycle": "4247"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_18",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "MTEQERDFGLGETYEDLDAHIDMFWQRGKQHWQWQYDDLSHGHAGPY",
+    "binder_len": 47,
+    "total_energy": -0.038931342959403994,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/bandit_grpo",
+    "cycle": "31"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_19",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "MDVQLVESGGGSVQAGGSLRLSCAASGYIASINYLGWFRQAPGKEREGVAAVSPAGGTPYYADSVKGRFTVSLDNFENTVYLQMNSLKPEDTALYYCAAARQGWYIPLNSYGYNYWGQGTQVTVSSRGR",
+    "binder_len": 129,
+    "total_energy": -0.07898696660995484,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/bandit_grpo",
+    "cycle": "235"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_20",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "CGLGAKMLDEVHRGQDTMYMILMANGADKNFKDQYGDTAFIHKDKRNQLALQVAKYDDKDDPAYKELLKNAHTEPFMKVAIE",
+    "binder_len": 82,
+    "total_energy": -0.06683724522590638,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/ankyrin/random_greedy",
+    "cycle": "1145"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_21",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "SEWQLVEIGGGLVAQGGPLEMSCSASGFEIRDEFILWRTQAPGKGLEWIAIINPQTANEAYAQHVDGRMTISCDTRKHTAYQTTHSFRAEDRAVYYRERGGGEYFYTQDYNGQGTLVTVIS",
+    "binder_len": 121,
+    "total_energy": -0.574320662021637,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/4D5/random_greedy",
+    "cycle": "4629"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_22",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "MEVQLVESGGGLVQPGGSLRLSCAASGFNTKDTYIHWVRQAPGKGLEWVARIYPTNGYTRYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRWGGDGFYAMDYWGQGTLVTVSS",
+    "binder_len": 121,
+    "total_energy": -0.08596498966217042,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/4D5/bandit_grpo",
+    "cycle": "284"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_23",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "EPLMLVESLGGDVAKGQNWSLSCVRSGSKSWINLLGWFQQYPGKIRFGVAAVSPAGGTTPYADSVKGRFTVSADNVSNTVPLKQNDMKPEDSALRWCGAARSNQDNPLNSYMYKKWGYGTQLFVVWDEC",
+    "binder_len": 129,
+    "total_energy": -0.6128342747688293,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/random_greedy",
+    "cycle": "2586"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_24",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "MTLLLLLLLLLPGVWGDVQLVQPGSALKKPGETLRLTCAASGFTFSSYWMNWVRQAPGKGLEWIATINSDGSYTYYADSVKGRFTISRDNAKNSLYLQMNRLRAEDTAVYYCARDITVGWGQGTLVTVSSASTKGSSYPLLFLSGQTAESGGGAVTLGCLATGFTPSTYSMYWIRQAPGKGLEWVARIYPSSGYTNYA",
+    "binder_len": 198,
+    "total_energy": -0.0642044484615326,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/4D5/proposal_bandit",
+    "cycle": "3125"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_25",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "RIVLITGAASGIGWALAQRFAAEGARLALVDVDEAALAAVAAELAALGAAALAVAGDVADEAAVAAAVAAAVARFGRLDVLVNNAGISLAGKVADVTPDDFQRVLAVNLDGVFLGCQAALPHLLAQRRGHIVNVASVGGLSVFPCHAAYNASKFAV",
+    "binder_len": 156,
+    "total_energy": -0.1738719403743744,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/bandit_grpo",
+    "cycle": "440"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_26",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "YWYVFGQNAQDQMNWVMELHTEDSREVYVEKQSHPFQDWVHQMYGSGRSFLQM",
+    "binder_len": 53,
+    "total_energy": -0.032666760683059695,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/proposal_bandit",
+    "cycle": "2859"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_27",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "MDLGKKLLEAARAGQDDEVRILMANGADVNAKDQYGDTAFIHKNHRNNLEQVVAKYLDKDDPNRIELLKNAATEPAIKVFEE",
+    "binder_len": 82,
+    "total_energy": -0.05615867972373963,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/ankyrin/bandit_grpo",
+    "cycle": "449"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_28",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "MKTNRSKASDLTDYAIILIKSFSGRNLYKSVKYNGRVEVTCEAEVKGLSFTWKNGTTEIKTVQESNNQYLISINNVSSIDTGNYICEAENPFGNTSDAIELNVICKYFCCLQSLSSFYLIIKNYLHL",
+    "binder_len": 127,
+    "total_energy": -0.05685586333274842,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/nanobody/proposal_bandit",
+    "cycle": "2625"
+  },
+  {
+    "name": "1TNF_TNF_alpha_random_29",
+    "target_id": "1TNF_TNF_alpha",
+    "sample_type": "random",
+    "binder_seq": "FQQFGVGETHSNVQAHIDPFWQRGKQHWIWQYDDLSRGHAGPSFIDLVRNVTMKHKNGCRVAPICGASKAETYINYPDNVIKYGDLT",
+    "binder_len": 87,
+    "total_energy": -0.028487136960029604,
+    "source_run": "mt2_bench/1TNF_TNF_alpha/random_init/bandit_grpo",
+    "cycle": "116"
+  },
+  {
+    "name": "1YCR_MDM2_top20_00",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "NGADVNAKDQEGNTALMYAIAKDNYETVKLCIANGADVNAKDKYRNTALMYAIAKDNYETVKRLIANGAPVNAKDKYGNTALMYAIAKDNYETHKRLIANGADVNFKDKYGNTALMYAIAKDNYNTVKRLIANGADVIAKDKYINTALMYAIAKWNMETCKRLIANGADV",
+    "binder_len": 170,
+    "total_energy": -0.5591836750507355,
+    "source_run": "mt2_bench/1YCR_MDM2/ankyrin/bandit_grpo",
+    "cycle": "417"
+  },
+  {
+    "name": "1YCR_MDM2_top20_01",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "DMVQLVPSGGGSDLWGGSLRTMCAAEGCIHIINFLGWFRQAPLKEREGVAAVNPEGREPYYRDGFWLKFTVSLDKASHTLYLWMRPLKPHCTALHYCAAAKQGWYIPLFWYGYIAWGQGTQVHEVSRLK",
+    "binder_len": 129,
+    "total_energy": -0.45402246713638306,
+    "source_run": "mt2_bench/1YCR_MDM2/nanobody/random_greedy",
+    "cycle": "5206"
+  },
+  {
+    "name": "1YCR_MDM2_top20_02",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "IAEHEHMGPTFWDAKGMMVRFSNQGYYKQDSHIPASRIIAWLLDTSEDPFYPIPKGY",
+    "binder_len": 57,
+    "total_energy": -0.6207500100135803,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/random_greedy",
+    "cycle": "3361"
+  },
+  {
+    "name": "1YCR_MDM2_top20_03",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "PQQGFKEAGCGMVTPSGSLQLSCMAWGFMIKFTILHWVNQFKERGEIWSARIYPAFGYTSYDDSVFLRHTISADNSKNHLGLMMNNLRAQDTAVHYCSKWGGDGWYAMINWGTGDMVTVRS",
+    "binder_len": 121,
+    "total_energy": -0.6935060501098633,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/random_greedy",
+    "cycle": "2566"
+  },
+  {
+    "name": "1YCR_MDM2_top20_04",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "LTQGFKEAGCGMVKPQGSLSLSCMAWGFMIKFTILHWVNQFKERGEIWSARIYPAFGYTRYDDSVFLRHTISADSSKNHLGLVMNNLRVQDTAVHYCSKWGGKGWYTMINWGTGDMVSVRS",
+    "binder_len": 121,
+    "total_energy": -0.7085636377334594,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/random_greedy",
+    "cycle": "3885"
+  },
+  {
+    "name": "1YCR_MDM2_top20_05",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "AREFNNCNWQWDFARYNEHCRPKPSMKTYIHIWMLIVMGNVEVIG",
+    "binder_len": 45,
+    "total_energy": -0.4233981519937515,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/bandit_grpo",
+    "cycle": "285"
+  },
+  {
+    "name": "1YCR_MDM2_top20_06",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "MEVILYESGGGTVQPGMSLRLWCAASGFTLSSYYMSWIRQAPGKGLEWMALISSHGGSTHYFDSVKRRFVISRDNSKNILYLQMDSLRHEDTAVYYCARYD",
+    "binder_len": 101,
+    "total_energy": -0.611557912826538,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/bandit_grpo",
+    "cycle": "423"
+  },
+  {
+    "name": "1YCR_MDM2_top20_07",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "LDESEQMRPTFWDARGMQVRFNQQGYYKQDSHIDASRIIAWLLDTSEDPFYPIPKFY",
+    "binder_len": 57,
+    "total_energy": -0.5909560233354568,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/random_greedy",
+    "cycle": "2635"
+  },
+  {
+    "name": "1YCR_MDM2_top20_08",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "PQQGFKEAGCGMVTPQGSLQLSCMAWGFMIKFTILHWVNQFKERGEIWSARIYPAFGYTRYDDSVFLRHTISADNSKNHLGLMMNNLDAQDTAVHYCSKWGGDGWYAMINWGTGDMVTVRS",
+    "binder_len": 121,
+    "total_energy": -0.6854160308837891,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/random_greedy",
+    "cycle": "2629"
+  },
+  {
+    "name": "1YCR_MDM2_top20_09",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "IAESEHMGPTFWDARGMQVRPSNQGYYKQDSHIPASRIIAWLLDTSEDPFYPIPKGY",
+    "binder_len": 57,
+    "total_energy": -0.609811070561409,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/random_greedy",
+    "cycle": "3328"
+  },
+  {
+    "name": "1YCR_MDM2_top20_10",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "PQQGFKEAGCGMVKPQGSLQLSCMAWGFMIKFTILHWVNQFKGRGEIWSARIYPAFGYTRYDDSVFLRHTISADSSKNHLGLVMNNLRAQDTAVHYCSKWGGDGWYAMINWGTGDMVTVRS",
+    "binder_len": 121,
+    "total_energy": -0.6634616613388061,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/random_greedy",
+    "cycle": "2799"
+  },
+  {
+    "name": "1YCR_MDM2_top20_11",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "LTPGFKEEGCGMVKPQGSLSLSCSAWGFDIKFTILHWVNQFKKRGEIWSARIYPMFGYTRYDDHVFLRYKITADSSKNHLNLVMNFLRVQDTAVHYCSMWGGKGWYYMINWGTGDMVSVRT",
+    "binder_len": 121,
+    "total_energy": -0.546074515581131,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/random_greedy",
+    "cycle": "5291"
+  },
+  {
+    "name": "1YCR_MDM2_top20_12",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "LDESEQMRPTFWDARGMQVRFNQQGYYKQDSHIDESRIIAWLLDTSEDPFYPIPKMY",
+    "binder_len": 57,
+    "total_energy": -0.5943696558475494,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/random_greedy",
+    "cycle": "2703"
+  },
+  {
+    "name": "1YCR_MDM2_top20_13",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "MEVILYESGGGTVQPGMSLELWCAASGFTLSSYYMSWIRQAPGKGLEWMALISSHGGSTHYADSVKRRFVISRDNSKNILYLQMDSLRHEDTAVYYCARYD",
+    "binder_len": 101,
+    "total_energy": -0.49705979228019714,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/bandit_grpo",
+    "cycle": "242"
+  },
+  {
+    "name": "1YCR_MDM2_top20_14",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "top20",
+    "binder_seq": "HTGKIPCKTMWAGSWASERFNPHNWPAPQIKRYIYIWILIVFGEVEQWG",
+    "binder_len": 49,
+    "total_energy": -0.43249234557151794,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/bandit_grpo",
+    "cycle": "186"
+  },
+  {
+    "name": "1YCR_MDM2_random_15",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MNPDEIKKLLLESAKEGDEEGVRKALQKGAKVNVQDDFGRTALIHAAKRDNLKLIKLLLKAGAKTEARDSSGKTALQIALENNHRKTVALLK",
+    "binder_len": 92,
+    "total_energy": -0.08942787051200868,
+    "source_run": "mt2_bench/1YCR_MDM2/ankyrin/proposal_bandit",
+    "cycle": "5123"
+  },
+  {
+    "name": "1YCR_MDM2_random_16",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "DMVQLVPSGGGSDLSGGSLRTMCAAKGCIHIINFLGWFRQAPLKEREGVAAVNPTGREPYYRDQVWLRFTVSLDNASHTLYLWMRPFKPHCTALHYCAAAKQGWYIPLFWYGYIAWGQGTQVHEVSRLK",
+    "binder_len": 129,
+    "total_energy": -0.42698970437049866,
+    "source_run": "mt2_bench/1YCR_MDM2/nanobody/random_greedy",
+    "cycle": "2611"
+  },
+  {
+    "name": "1YCR_MDM2_random_17",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MPESSLALVILPIAALVSGLAIPPGIIGIELTQEGESITVSDNGTFQGSGVSVTGINATGLINGTSSNTRYYNTFKGRATISRDDSSSTVDLTISSLRTEDTAVYYCARGGSGSNVYWGQGTLLVVSA",
+    "binder_len": 128,
+    "total_energy": -0.08780923262238503,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/proposal_bandit",
+    "cycle": "4801"
+  },
+  {
+    "name": "1YCR_MDM2_random_18",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MEVILYESGTGTVQPGMSLRLWCAASGFTLSSYYMSWIRQAPGKGLEWMALISSHGGSTHYADSVKRRFVISRDNSKNILYLQMDSLRHEDTAVYYCARYD",
+    "binder_len": 101,
+    "total_energy": -0.093796025775373,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/bandit_grpo",
+    "cycle": "305"
+  },
+  {
+    "name": "1YCR_MDM2_random_19",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "DMVQLVPSGGGSDLSGGSLRTMCAAKGCIHIINFLGWFRQAPLKEREGVAAVNPTGREPYYRDQVWWRFTVSLDNASHTVYLWMRPLKPHCTALHYCAAWKQGWYIPLFWYGYIAWGQGTQVHEVSRLK",
+    "binder_len": 129,
+    "total_energy": -0.3655681908130646,
+    "source_run": "mt2_bench/1YCR_MDM2/nanobody/random_greedy",
+    "cycle": "1528"
+  },
+  {
+    "name": "1YCR_MDM2_random_20",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MRNILTKRILLFKILSLVFIALSALSVQAAAQSKFIIQQLSQTYYQIQPGDTLRFSVDGVFTSNTKVTLISTPKLGGLGATIVPSPEIIQSNGTYTVTINTTNPDENFTLNGNQLAATASLVLVSSGNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+    "binder_len": 204,
+    "total_energy": -0.04607018828392029,
+    "source_run": "mt2_bench/1YCR_MDM2/nanobody/proposal_bandit",
+    "cycle": "1838"
+  },
+  {
+    "name": "1YCR_MDM2_random_21",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "SPMGDRLVAAAKAGQHDEVPIIQSNGADQDHEDQYGDTAAIHMNKRQNMEDVKSKILDKDDPTRWELLKNAANDPDCAVCEW",
+    "binder_len": 82,
+    "total_energy": -0.24126142561435698,
+    "source_run": "mt2_bench/1YCR_MDM2/ankyrin/random_greedy",
+    "cycle": "3240"
+  },
+  {
+    "name": "1YCR_MDM2_random_22",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MAVRERPLTIDEYYFPSDYGQSDIATINPENNHPVIGDIGHGQENNHTTSAIKQWKI",
+    "binder_len": 57,
+    "total_energy": -0.03958379626274109,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/proposal_bandit",
+    "cycle": "3027"
+  },
+  {
+    "name": "1YCR_MDM2_random_23",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MNPTLLAQLPADYRLLEVRNRPLTIDEYYFPSDYGQSDIATINPENNHPVIGDIGHGQENNHTTSAIKQWKI",
+    "binder_len": 72,
+    "total_energy": -0.04113644659519196,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/proposal_bandit",
+    "cycle": "3779"
+  },
+  {
+    "name": "1YCR_MDM2_random_24",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MSLIKPAQRTARLTCAASGFDPGSVEIEWFVNGQLQDGSRIETSPDRLSGTKYTAVSQVTLSPGDLDDGAVYSLRVNHRGLPQPLTVRLSLDVQYPPQVSVVGPGQEELVG",
+    "binder_len": 111,
+    "total_energy": -0.05273500084877014,
+    "source_run": "mt2_bench/1YCR_MDM2/4D5/proposal_bandit",
+    "cycle": "128"
+  },
+  {
+    "name": "1YCR_MDM2_random_25",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "KDKKGNTALMYAIAKDNYETVKLCIANGADVNAKDKYHNTALMYAIAKDNYSTVKRLIANGADVNAKDKYGNTALMYAIAKDNYETVKRLIANGADVNAKDKYGNTALMYAIAKDNYETVKRLIANGADVNAGDKYGNTALMYAIAKDNYETVKRLIANGADVNAKDKYGNTALMYAIAKWNYETCKRLIANGADV",
+    "binder_len": 196,
+    "total_energy": -0.5918005228042602,
+    "source_run": "mt2_bench/1YCR_MDM2/ankyrin/bandit_grpo",
+    "cycle": "322"
+  },
+  {
+    "name": "1YCR_MDM2_random_26",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MDLGKKLLEAARAGQDDEVRILMANGADVNAKDQYGDTAFIHKNKRNNLEQVVAKYLDKDDPNRIELLKNAVTEPAIKVFEE",
+    "binder_len": 82,
+    "total_energy": -0.05648690462112427,
+    "source_run": "mt2_bench/1YCR_MDM2/ankyrin/proposal_bandit",
+    "cycle": "326"
+  },
+  {
+    "name": "1YCR_MDM2_random_27",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "MELNITLLKAAIAGDKDAVNTLLSKKANVNAQDDYGDTAFIYKNKHNNLEAIVTDYLNKDNPNQLDLLDNAAKAAAVKLYEE",
+    "binder_len": 82,
+    "total_energy": -0.0545714557170868,
+    "source_run": "mt2_bench/1YCR_MDM2/ankyrin/proposal_bandit",
+    "cycle": "4019"
+  },
+  {
+    "name": "1YCR_MDM2_random_28",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "DVNAKDQEGNTALMYAIAKDNYETVKLCIANGADVNAKDKYHNTALMYAIAKDNYETVKRLIANGADVNAKDKYGNTALMYAIAKDNYETVKRLIANGADVNAKDKYGNTALMYAIAKWNMETCKRLIANGADV",
+    "binder_len": 134,
+    "total_energy": -0.41452059149742126,
+    "source_run": "mt2_bench/1YCR_MDM2/ankyrin/bandit_grpo",
+    "cycle": "389"
+  },
+  {
+    "name": "1YCR_MDM2_random_29",
+    "target_id": "1YCR_MDM2",
+    "sample_type": "random",
+    "binder_seq": "NITIEQLRDQFQAWRREQVFKFLAEAYKKVHGVTRDKAHQESVLSAVDHNFPIDDMF",
+    "binder_len": 57,
+    "total_energy": -0.0710022509098053,
+    "source_run": "mt2_bench/1YCR_MDM2/random_init/random_greedy",
+    "cycle": "1179"
+  },
+  {
+    "name": "2VSM_nipah_top20_00",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MDKVRQAVEKDDLVTLKDLISKGANINAKDKDGHTPLHYASEKGHTDVVKLLLEKGANVNAKDKDGHTPLHYASEKGHTDVVKLLLEKGANVNAKDKDGHTPLH",
+    "binder_len": 104,
+    "total_energy": -0.20481227189302445,
+    "source_run": "mt2_bench/2VSM_nipah/ankyrin/bandit_grpo",
+    "cycle": "59"
+  },
+  {
+    "name": "2VSM_nipah_top20_01",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "YDNGMWPSWWELSHSNDVARNLLMAERGPYIQNNNSMHEHWPDHYENIHMDWDKMHMNLYNEFLRPRHKTGKLVYTMIDGPGMEFTILKPILGAREREDIKMYAVYLITECGTTNGLIKYGLDM",
+    "binder_len": 124,
+    "total_energy": -0.3546035557985306,
+    "source_run": "mt2_bench/2VSM_nipah/random_init/bandit_grpo",
+    "cycle": "287"
+  },
+  {
+    "name": "2VSM_nipah_top20_02",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "QEHQLKESGGGRFQPQGSMRLSCAASGFNIKFTIIHWCGQAGGKASVFMATLQPMNGNDRYADYVCKRFRITARLSKNTAVLQGNQLKVEDTFCYECSVHGGDGTYAHNYAGQGTYVKVST",
+    "binder_len": 121,
+    "total_energy": -0.4473904013633728,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/random_greedy",
+    "cycle": "1322"
+  },
+  {
+    "name": "2VSM_nipah_top20_03",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MDVQLVESGGGSFNAGAVLLLVCAASGYIASCNYLGWFRQAPYKEREGVAADSPAGGTPYYDDSVKGRFTVDLDNKENTVYLQMNSLKGEDTALYYCATARQGWYPPLNTYGYNYWGQGTQVTVSSTGV",
+    "binder_len": 129,
+    "total_energy": -0.29691181778907777,
+    "source_run": "mt2_bench/2VSM_nipah/nanobody/random_greedy",
+    "cycle": "1849"
+  },
+  {
+    "name": "2VSM_nipah_top20_04",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MEVQLVEFGGGLVMPQGSLRLSCAASGFNIKFTYIHWCRQAGGKGSEWMARRQPTNGYDRYADSVCGRFTISADTSKNTAVLQGNTLRAEDTFVYYCSWHGGDGFYAMMYWGQGTYVTVSS",
+    "binder_len": 121,
+    "total_energy": -0.31411354839801786,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/random_greedy",
+    "cycle": "470"
+  },
+  {
+    "name": "2VSM_nipah_top20_05",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MEVQLRESGGGRVMPQGSLRLSCAASGFNIKFTYIHWCGQAGGKGSEFMATRQPINGYDRYADSVCKRFTITADLSKNTAVLQGNTLKAEDTFVYYCSWHGGDGFYAMMYVGQGTYVTESS",
+    "binder_len": 121,
+    "total_energy": -0.3393928050994873,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/random_greedy",
+    "cycle": "651"
+  },
+  {
+    "name": "2VSM_nipah_top20_06",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MVKVLLSAGADPNIKDKDGNTPLHYAASGGYPKTVKLLISKGADVNAKDKDGNTPLHYAASGGYPKTVKLLISKGADVNAKDKQGNTPLH",
+    "binder_len": 90,
+    "total_energy": -0.23940840661525725,
+    "source_run": "mt2_bench/2VSM_nipah/ankyrin/bandit_grpo",
+    "cycle": "222"
+  },
+  {
+    "name": "2VSM_nipah_top20_07",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MGSIITAIVSGAVLVAGVVLGAVVIGQGGSDSTSTNTTTPTTTAISCGSSPATGSSVTITWKKNGTTVSGSGTFTVSSITSSDSGSYSCSVSNSAGSTSSSASTVTITVTVAPSSPSISCSGQWASFTCTRPSSNPAATFTWYKGTTLVSSGTSYTVSTANSYDSGSYSCKVSNSAGSV",
+    "binder_len": 179,
+    "total_energy": -0.2207458049058914,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/bandit_grpo",
+    "cycle": "48"
+  },
+  {
+    "name": "2VSM_nipah_top20_08",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MDVQLVESGGGSFQAGAVLLLVCAASGVIASCNYWGWFRQAPYKEREGVASDSPAGGTPYCDDSVKGRFTVDLDNKENTVYLQMNSLKGEDTALYYCATARQGWYPPLNTYGYNYWGQGTQVTVSDTGV",
+    "binder_len": 129,
+    "total_energy": -0.27917357087135314,
+    "source_run": "mt2_bench/2VSM_nipah/nanobody/random_greedy",
+    "cycle": "1941"
+  },
+  {
+    "name": "2VSM_nipah_top20_09",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MEVQLRESGGGRVEPQGSLRLSCAASGFNIKFTYIHWCGQAGGKGSEFMATRQPINGYDRYADYVCKRFTITAKLSKNTAVLQGNQLKVEDTFVYYCSWHGGDGFYAMMYVGQGTYVKVSS",
+    "binder_len": 121,
+    "total_energy": -0.39369431138038635,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/random_greedy",
+    "cycle": "765"
+  },
+  {
+    "name": "2VSM_nipah_top20_10",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MILYGAKKTKIDIVRLLIDKGADVNAKDKDGNTPLHRAAGGSHVDVVKYLVEQGADINAKDKDGNTPLHRAAGGSHVDVVKYLVEQGADINAKDKDGNTPLH",
+    "binder_len": 102,
+    "total_energy": -0.2216986805200577,
+    "source_run": "mt2_bench/2VSM_nipah/ankyrin/bandit_grpo",
+    "cycle": "136"
+  },
+  {
+    "name": "2VSM_nipah_top20_11",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MIKRLLALTAAVALLAACGGGGGGGGGGGGGGGGGGGGGGGGGCGGGGGSSSSSSSSSSSSSGGGSGGGSSSSSSSSSSSSSSSGGGSGGGGISLSCSGWKISGSSATVFIKKNGTTVSGSGSFTVTSIVSNDSGTYSCSVSNQAGTTASTASWVTITVAVAPSSPSISCSGQWASFTCTRPSSNPANTFTWYKYTTLVHSGTSYTVSSANEYDPGQYSCKVSNSLGSV",
+    "binder_len": 229,
+    "total_energy": -0.3248596012592316,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/bandit_grpo",
+    "cycle": "183"
+  },
+  {
+    "name": "2VSM_nipah_top20_12",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MNLVCLLGLGALAGTGAVTVSSATVSPASQTLTSGGSVDLTCTGTAANTSTATANWYKNGAPVSTGSGYSISSISNSDSGSYSCKVSNSVGSVTSSTSTVTITVSVAPSSPSISCSGQTASFTCTAPSSNPAATFTWYKGTTLVSSGTSYTVSTANSYDSGSYSCKVSNSAGSV",
+    "binder_len": 174,
+    "total_energy": -0.19177978932857515,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/bandit_grpo",
+    "cycle": "35"
+  },
+  {
+    "name": "2VSM_nipah_top20_13",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MVQNGDTERIKALLKDDLDVNAKAKYGDTPLLHAAYNNHVDVVKYLVEQGADINGKDKDGNTPLHWAASGSHVDVVKYLVEQGADINAKDKDGNTPLH",
+    "binder_len": 98,
+    "total_energy": -0.19014169573783873,
+    "source_run": "mt2_bench/2VSM_nipah/ankyrin/bandit_grpo",
+    "cycle": "165"
+  },
+  {
+    "name": "2VSM_nipah_top20_14",
+    "target_id": "2VSM_nipah",
+    "sample_type": "top20",
+    "binder_seq": "MDARRAAAEAGEQYAYVADLAPDGRPGFRRHVVVESADWFSRRDFNCRVTHEALNEPIHGWPHNPEAPSVWLTSDSYDKALKSVIVTASASDYDGVIVKIAFYSDGELKRADTSSPLTVHWDSTSVSNGSHSLCAKAYDYLGAA",
+    "binder_len": 144,
+    "total_energy": -0.48785421848297117,
+    "source_run": "mt2_bench/2VSM_nipah/nanobody/bandit_grpo",
+    "cycle": "177"
+  },
+  {
+    "name": "2VSM_nipah_random_15",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "CKVEKHIKKMLESLMQMIKMGCVDQSPINYMFKDPGFPAQYVNYIILLMNQ",
+    "binder_len": 51,
+    "total_energy": -0.07578572034835816,
+    "source_run": "mt2_bench/2VSM_nipah/random_init/random_greedy",
+    "cycle": "599"
+  },
+  {
+    "name": "2VSM_nipah_random_16",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "CIKRLLALTAAVALLAACGGGGGGGGGGGGGGGGGGGGGGGGGCGGGGGSSSSSSSSSSSSSGGGSGGGSSSSSSSSSSSSSSSGGGSGGGGISLSCSGHGISGSSATVFIKKNGTTVSGSGSFTVTSIVSNDSGTYSCSVSNQAGTTASTASWVTITVAVAPSSPSISCSGQWASFTCTRPSSNPANTFTWYKYTTLVHSGTSYTVSSANEYDPGQYSCKVSNSLGSV",
+    "binder_len": 229,
+    "total_energy": -0.34576072096824645,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/bandit_grpo",
+    "cycle": "184"
+  },
+  {
+    "name": "2VSM_nipah_random_17",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "LSQTPSALVKPSGSLSLTCTASGFTLSSYSMSWIRQLPGKGLEWVANISSSSGNTYYADSVKGRFTQSRDNTKSSLYLQMNVLRAEDTAVYYCARDTVRGNPYESCHPALDKPLRVTVTGLGLGTAVIGPSVAVDSIQLSCRGNNFEPGSV",
+    "binder_len": 151,
+    "total_energy": -0.057256299257278445,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/proposal_bandit",
+    "cycle": "1480"
+  },
+  {
+    "name": "2VSM_nipah_random_18",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "ITSSNSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSSGTYTCTASNSYGSITSSSS",
+    "binder_len": 234,
+    "total_energy": -0.04008333384990692,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/bandit_grpo",
+    "cycle": "101"
+  },
+  {
+    "name": "2VSM_nipah_random_19",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MGSEGGVVTLKCSARGFSLSTYMMWIRQAAGKVLEWIGRIDPSSGGTYYASSVKGRFTISRDNAKNQLYLQMNSLRAEDSAVYYCARDTIYGSYHDMDYWGQGTMVTVSSASTKGPSVFFGPS",
+    "binder_len": 123,
+    "total_energy": -0.06859828233718872,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/proposal_bandit",
+    "cycle": "1378"
+  },
+  {
+    "name": "2VSM_nipah_random_20",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "LWPTWWELGHSNDVARDLLLAKRGPYIQNNNSLHRHWPEHYDNIHMNWDKMHMNLYNEFLRPRNKTGKLVYTMSDGPGMEFTPLKPVLGAREREDIKMYAVYLITKCGTTNGLIKYGLESEKENPLYVPVLGVA",
+    "binder_len": 134,
+    "total_energy": -0.28526282906532285,
+    "source_run": "mt2_bench/2VSM_nipah/random_init/bandit_grpo",
+    "cycle": "254"
+  },
+  {
+    "name": "2VSM_nipah_random_21",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "DKVDKMIKAMLRLLMMMIRNGEVDNTPIQYMFKDPHFPKQYVNFIILLMNE",
+    "binder_len": 51,
+    "total_energy": -0.07686427235603333,
+    "source_run": "mt2_bench/2VSM_nipah/random_init/random_greedy",
+    "cycle": "1375"
+  },
+  {
+    "name": "2VSM_nipah_random_22",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MSNNELIETLIKAVNLGQTDEVRDLITNGADPNQRNRYGDTAFIHKSKRNNLKQVVMLFLDRDDPNRIALLKAAMTEPAIKVFEE",
+    "binder_len": 85,
+    "total_energy": -0.057443320751190186,
+    "source_run": "mt2_bench/2VSM_nipah/ankyrin/proposal_bandit",
+    "cycle": "1315"
+  },
+  {
+    "name": "2VSM_nipah_random_23",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MDVQLVESGGGSVQAGGSLRLSCAASGYIASINYLGWFRQAPGKEREGVAAVSPAGGTPYYADSVKGRFTVSLDNAENTVYLQMNSLKPEDTALYYCAAARQGWYIPLNSYGYNYWGQGTVVTVSSRGR",
+    "binder_len": 129,
+    "total_energy": -0.07672327160835267,
+    "source_run": "mt2_bench/2VSM_nipah/nanobody/random_greedy",
+    "cycle": "2349"
+  },
+  {
+    "name": "2VSM_nipah_random_24",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MVQYSFSPGPNLVMDILTYGMYYQRDQQEITPDDKYVTWHASHDLNKIHYLGESLN",
+    "binder_len": 56,
+    "total_energy": -0.023185093700885773,
+    "source_run": "mt2_bench/2VSM_nipah/random_init/proposal_bandit",
+    "cycle": "1081"
+  },
+  {
+    "name": "2VSM_nipah_random_25",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MARLFLRAVDLGKKLLDAARKGDDDEVKTLLANGADVNAKMDYGDTAWIHKNKRNNLEQVVARYLDKDDPNRIELLKNAATEPAIKVFEE",
+    "binder_len": 90,
+    "total_energy": -0.04446189403533936,
+    "source_run": "mt2_bench/2VSM_nipah/ankyrin/proposal_bandit",
+    "cycle": "2445"
+  },
+  {
+    "name": "2VSM_nipah_random_26",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MEEYLAGQSYGDFASGQYPSWWELSHSNDVARNLLMAERGPYVQNNNSMHEHWPDHYENIHMDWDKMHMNLYNEFLRPRNK",
+    "binder_len": 81,
+    "total_energy": -0.025060126185417177,
+    "source_run": "mt2_bench/2VSM_nipah/random_init/bandit_grpo",
+    "cycle": "92"
+  },
+  {
+    "name": "2VSM_nipah_random_27",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MEVQLVESGGGLVQPGGSLRLSCAASGFNIKDTYIHWVRQAPGKGLEWVARIYPTNGQTRYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRWGGDGFYAMDYWGQGTLVTVSS",
+    "binder_len": 121,
+    "total_energy": -0.08347814083099366,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/bandit_grpo",
+    "cycle": "25"
+  },
+  {
+    "name": "2VSM_nipah_random_28",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MDMAKKLLLAARQGQDSPVLQLMEGGADVNAKTEHGDTAFHGKNKNPLTETWVAKYLVKDDPNRIELAKAATTEPAIKVFKE",
+    "binder_len": 82,
+    "total_energy": -0.06921502947807312,
+    "source_run": "mt2_bench/2VSM_nipah/ankyrin/random_greedy",
+    "cycle": "2009"
+  },
+  {
+    "name": "2VSM_nipah_random_29",
+    "target_id": "2VSM_nipah",
+    "sample_type": "random",
+    "binder_seq": "MEVQLVESGGGLVQPGGSLRLSCAASGFNIKDTYIHWHRQAPGKGLEWVARIYPTNGYTRYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRWGGDGFYAMDYWGQGTLVTVSS",
+    "binder_len": 121,
+    "total_energy": -0.08360583782196046,
+    "source_run": "mt2_bench/2VSM_nipah/4D5/proposal_bandit",
+    "cycle": "880"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_00",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "MNLLIAAKSGDMKSVKELLKKGADVNAIDKNGNTALIYAAREGHLVIVKYLISHGANVNAKDNDGNTALHYAARENHLEVVKYLISAGADVNAKDNDGNTALHYAAR",
+    "binder_len": 107,
+    "total_energy": -0.7078665554523468,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/bandit_grpo",
+    "cycle": "161"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_01",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "MLSYNSLALSQEIVMFVNDEITIRMEWKPVYEYDILQLWWQVPGYHCEMIAGIMSGSGYTNYAESVCGRFTISRAQSRYFLYLIMISLRAEDSAVYYQIRQCQ",
+    "binder_len": 103,
+    "total_energy": -0.6416166961193085,
+    "source_run": "mt2_bench/4OYD_epstein_barr/4D5/bandit_grpo",
+    "cycle": "195"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_02",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "GRDPWDMMEEMIVKMDHDIWAYRMKRACCEQRYLRHSQHQDPNSHHLINGLGFDNNYPCSCIPFS",
+    "binder_len": 65,
+    "total_energy": -0.6462749421596528,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/random_greedy",
+    "cycle": "4246"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_03",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "MDLLNAARDGKLKKVRELIKSGADVNAKDKYGNTALIYAAREGHLEVVKYLIKVGADINAKDNDGNTALHYAARENHLEVVKYLISAGADVNAKDNDGNTALHYAAR",
+    "binder_len": 107,
+    "total_energy": -0.7060353577136993,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/bandit_grpo",
+    "cycle": "131"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_04",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "GRDPWDMMEEMIVKMDHDIWAYRNKRACCEQRPLRHSQHQDPNSHHLINGLGFDNNYPCSCIPVS",
+    "binder_len": 65,
+    "total_energy": -0.6352085590362548,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/random_greedy",
+    "cycle": "3385"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_05",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "YEIALYEMGGGSSQAGGNLELICIMIGYDASINTLMWFRQAYCKEREGEAAVMPHGVSPWYQDYVVGRFEVVLDNVHNQVYLRMVKLQPEPTTSYYCAAANQGWAGPGDDAGYYYWGWSTQVTVSKRGK",
+    "binder_len": 129,
+    "total_energy": -0.6718821942806243,
+    "source_run": "mt2_bench/4OYD_epstein_barr/nanobody/random_greedy",
+    "cycle": "4061"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_06",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "DDIALYEMGGGSVQAGGNLELICMTIGYDASINYLMWFRQAYCKEREGEAAVMPHGVDPWYQDYVKGRFEVVLDNHHNKVYLRMVKLQPEPTTSYYCAAAQQGWAPPGDDYGYNYWGWSTQVTVSATGR",
+    "binder_len": 129,
+    "total_energy": -0.6354707241058349,
+    "source_run": "mt2_bench/4OYD_epstein_barr/nanobody/random_greedy",
+    "cycle": "3105"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_07",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "GRDPWDMMEEMIDKMDHDIWAYRMKRACCEQRPLRHSQHQDPNSHHLINGLGFDNNYPCSYIPVS",
+    "binder_len": 65,
+    "total_energy": -0.6801300406455993,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/random_greedy",
+    "cycle": "3099"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_08",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "MLKAARSGDKETVKKLLKKGANVNAKDKDGNTALIYAAREGHLEIVKYLISQGANVNAKDNDGNTALHYAARENHLEVVKYLISAGADVNAKDNDGNTALHYAAR",
+    "binder_len": 105,
+    "total_energy": -0.6891952931880951,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/bandit_grpo",
+    "cycle": "375"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_09",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "GKDPWDMMEEMIVKMDHDIWCYRMKRACCEQRPLYHSQHHDPNSHMLIDGLGFDQNRPISCIPMP",
+    "binder_len": 65,
+    "total_energy": -0.7111285746097564,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/random_greedy",
+    "cycle": "1561"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_10",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "PDLGKNLLKAARHGQQDEVKTLEKNQADVNEKDQYCTTANVHVKKRRNLEQIEAKYISRSDPNRIKLLKNVDLCPFFKWLAY",
+    "binder_len": 82,
+    "total_energy": -0.7241427540779114,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/random_greedy",
+    "cycle": "749"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_11",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "GRDPWDMMEEMIVKMDGDIWAYRMKRACCEQRPLRHSQHQDPNSHHLINGLGFDNNYPCSYIPVS",
+    "binder_len": 65,
+    "total_energy": -0.6507914394140244,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/random_greedy",
+    "cycle": "3026"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_12",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "MDLLKAARDGDLDRVKELIKSGADVNAKDKYGNTALIYAAREGHLEVVKYLISVGADINAKDNDGNTALHYAARENHLEVVKYLISAGADVNAKDNDGNTALHYAAR",
+    "binder_len": 107,
+    "total_energy": -0.6540421426296235,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/bandit_grpo",
+    "cycle": "127"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_13",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "SDLGKQLLTASRDGHYDEVKTLEKNGADVNEKDQYCTTANVHVKKRRNLEGIEAKYIPRSDSNRIKLLKTVDLRPFFIWLAY",
+    "binder_len": 82,
+    "total_energy": -0.7700665235519409,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/random_greedy",
+    "cycle": "1482"
+  },
+  {
+    "name": "4OYD_epstein_barr_top20_14",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "top20",
+    "binder_seq": "SHLGKDHLQASTDGMYDEVLVLEKRGADVNLKDQYCSTAKVHVDKRKDLEGIEAKYIPKTDANRIKLLQSVDIRGFFRWMAY",
+    "binder_len": 82,
+    "total_energy": -0.7916025340557098,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/random_greedy",
+    "cycle": "3850"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_15",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "YEIALYEMGGGSSQAGGNLELICIMIGYDASINYLMWFRQAYCKEREGEAAVMPHGVDPWYQDYVVGRFEVVLDNVHNQVYLRMVKLQPEPTTSYYCAAANQGWAEPGDDAGYYYWGWSTQVTVSKMGK",
+    "binder_len": 129,
+    "total_energy": -0.669386339187622,
+    "source_run": "mt2_bench/4OYD_epstein_barr/nanobody/random_greedy",
+    "cycle": "3892"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_16",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "YEIALYEMGGGSSQAGGNLELICIMIGYDASINYLMWFRQAYCKEREGEAAVMPHGVDPWYQDYVVGRFEVVLDNVHNQVYLRMVKLQPEPTTSYYCAAANQGWAEPGDDAGYYYSGWSTQVTVSKTGK",
+    "binder_len": 129,
+    "total_energy": -0.627310186624527,
+    "source_run": "mt2_bench/4OYD_epstein_barr/nanobody/random_greedy",
+    "cycle": "3755"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_17",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MDLGKKLLEAARAGQDDEVRILMANGADVNAKDQYGDTAFIHKNKRNNLEQVVAKYLDVDDPNRIELLKNAATEPAIKVFEE",
+    "binder_len": 82,
+    "total_energy": -0.052731198072433476,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/bandit_grpo",
+    "cycle": "153"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_18",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "GQVLLLESGGGSRGPGSVWICSCAAIGFNIRRNFIHWVRHAPGHGLEWDANLYPMNVYLKYADSHGGRGTTFADTVKTTSYLKKTDLKATVTAVYICSRWNGSGDGVMDYAGKGTLVTVNS",
+    "binder_len": 121,
+    "total_energy": -0.6209189116954803,
+    "source_run": "mt2_bench/4OYD_epstein_barr/4D5/random_greedy",
+    "cycle": "5237"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_19",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MAIRTKPWWQYEHLNERFMIMSCKEQCISHTIVYWRIIWSAWALQVIGKNKHDMKQLISMPWVH",
+    "binder_len": 64,
+    "total_energy": -0.031942492723464964,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/proposal_bandit",
+    "cycle": "1788"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_20",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MLDLRQKLIEAVRAEQDEKAKTILEQGGNVNLRDKDGDTAIIHRKKKDNIQQLIERYKDRSDPSRIEFLETAVTDAIEVEVL",
+    "binder_len": 82,
+    "total_energy": -0.04599472284317017,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/proposal_bandit",
+    "cycle": "3891"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_21",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MGKKESFLFSNRLDMKHQEHHCDRFMIKSIKKCCITQTILYWRIIWSAWTIQEIGKNKHQLKQLTSMPWVH",
+    "binder_len": 71,
+    "total_energy": -0.0849546179175377,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/proposal_bandit",
+    "cycle": "1436"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_22",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MNDKLIAAARAGDLESVKNLIEAGANVNTKDEYGDTAFIHKNKKKNLELIVTEYLDTHDPETIEALKKAATEPAIKVFEE",
+    "binder_len": 80,
+    "total_energy": -0.05619107484817505,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/proposal_bandit",
+    "cycle": "4011"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_23",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "GKDPWDMMEEMIVKMDHDIWCYRMKRACCEQRPLRHSQHHDPNSHHLIDGLGFDNNCPISCIPMP",
+    "binder_len": 65,
+    "total_energy": -0.7069127321243286,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/random_greedy",
+    "cycle": "1739"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_24",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MEVQLVESGGGLVQPGGSLRLSCAASGFNIKDTYIHWVRQAPGKGLEWVARIYPTNGYTRYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRRDTYSYYAMDYWGQGTLVTVSS",
+    "binder_len": 121,
+    "total_energy": -0.08650190830230714,
+    "source_run": "mt2_bench/4OYD_epstein_barr/4D5/proposal_bandit",
+    "cycle": "1027"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_25",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MIALYLAAGANPNAADAYGRNPLHWAAEQGNIGAVSILLQAGADVNVKDKYGWTPLHYAAGTGQLDAVRFLLGKGADINAKDKYGWSPLHYAVENGHVDVVEILLQNGADVNAKDKDG",
+    "binder_len": 118,
+    "total_energy": -0.08706474304199219,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/proposal_bandit",
+    "cycle": "4168"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_26",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "SMLGKELLTASRDGMYDEVKVLEKNGADVNEKDQYCTTANVHVKKRKDLEGIEAKYIPRTDSNRIKLLKTTDLRGFFRWMAY",
+    "binder_len": 82,
+    "total_energy": -0.056287443637847906,
+    "source_run": "mt2_bench/4OYD_epstein_barr/ankyrin/random_greedy",
+    "cycle": "2698"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_27",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MDVQLVESGGGSVQAGGSLRLSCAASGYIASINYLGWFKQAPGKEREGVAAVSPAGGTPYYADSVKGRFTVSLDNAENTVYLQMNSLKPEDTALYYCAAARQGWYIPLNSYGYNYWGQGTQVTVSSRGR",
+    "binder_len": 129,
+    "total_energy": -0.07860423922538758,
+    "source_run": "mt2_bench/4OYD_epstein_barr/nanobody/bandit_grpo",
+    "cycle": "414"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_28",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MDPSPGCVITAGGNINLNCQTSREVYSNYNMNWVRQAPGKGLEWMSWINSGGANSYYSDSVKGRFTISKDNAKSQLYLQMNSLRPEDTAVYYCARDYSYSETYYWGQGTLVTVTSTSTSTSGMFRLSSLHH",
+    "binder_len": 131,
+    "total_energy": -0.07001813054084778,
+    "source_run": "mt2_bench/4OYD_epstein_barr/nanobody/proposal_bandit",
+    "cycle": "5391"
+  },
+  {
+    "name": "4OYD_epstein_barr_random_29",
+    "target_id": "4OYD_epstein_barr",
+    "sample_type": "random",
+    "binder_seq": "MDPKWHPLLLLILQLDRVFDPLDFNSSLKRHYTCRSTYWVVKCK",
+    "binder_len": 44,
+    "total_energy": -0.5370516121387482,
+    "source_run": "mt2_bench/4OYD_epstein_barr/random_init/bandit_grpo",
+    "cycle": "71"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_00",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "MQNVGIQWYKPKSPLTWDVAKKFPRGTDPAFWRYAHDV",
+    "binder_len": 38,
+    "total_energy": -0.6860928237438202,
+    "source_run": "mt2_bench/4ZQK_PD-L1/random_init/bandit_grpo",
+    "cycle": "332"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_01",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "MREKKNIYNFLFCKIYMYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYYYIYIYIYIYIYIYIYIYI",
+    "binder_len": 93,
+    "total_energy": -0.995738410949707,
+    "source_run": "mt2_bench/4ZQK_PD-L1/4D5/bandit_grpo",
+    "cycle": "401"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_02",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "NLKIAMIEIMHQVSQAMCLDRRLTDRQFRQITETEHDFVETC",
+    "binder_len": 42,
+    "total_energy": -0.8285554051399231,
+    "source_run": "mt2_bench/4ZQK_PD-L1/random_init/random_greedy",
+    "cycle": "1023"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_03",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "PGKQLVESGGGLVQYGGSKMLSCLASGYTASINVLTWFRQAPGRNREGVAAVSPSGGTPHYADFVKGRFTVSHDTQINTLYLQSNSLKPEDTRLYYCSAARQGHYYPLNSYGYNSWGASTQVNVSSRGA",
+    "binder_len": 129,
+    "total_energy": -0.6935494124889374,
+    "source_run": "mt2_bench/4ZQK_PD-L1/nanobody/random_greedy",
+    "cycle": "527"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_04",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "NLKIAMINLWHQLSNAMCLDRRLTDTQFRQITENEHDFVENC",
+    "binder_len": 42,
+    "total_energy": -0.7535822451114654,
+    "source_run": "mt2_bench/4ZQK_PD-L1/random_init/random_greedy",
+    "cycle": "1889"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_05",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "MFVQLVESGGSLVPPGGSLRLSCAASGFNIKDTYIHWVRTAPGKGLEWVARIYPQNGNTRYADSRKGRFTISADGSRNTAYLQMNSLRAEDTAVYYCSRWGGDGFYACDYWGQGTLFTVSS",
+    "binder_len": 121,
+    "total_energy": -0.6343408703804017,
+    "source_run": "mt2_bench/4ZQK_PD-L1/4D5/bandit_grpo",
+    "cycle": "31"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_06",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "MLVQLVEQGGGFLTPSGSLKLHCGASGFNFYVTYNIWVCQAAGFGLEWVVNVYPVTKYTRYADHVKGRFEITVDIKAHHAYLGMEKLRAEDTAVHYCSRWNGDGIYWMDYWGVGTLFTVSS",
+    "binder_len": 121,
+    "total_energy": -0.7380555212497711,
+    "source_run": "mt2_bench/4ZQK_PD-L1/4D5/random_greedy",
+    "cycle": "2439"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_07",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "NLKAMLIKLMHQLSYAMCLDRRFTADQYRTIIEIDHDFVEWC",
+    "binder_len": 42,
+    "total_energy": -0.829506516456604,
+    "source_run": "mt2_bench/4ZQK_PD-L1/random_init/random_greedy",
+    "cycle": "5214"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_08",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "HGKDLFEDGGGSVAYQGSKMLSCLASGYTASINQFTYFRQAPARKREGVAMVIPSGPGPYYADFVKGRFTVSMDTNINTLYLVCDSLQVEDTRLYYCSAAMLGHYTPLTNYGYNRWGASTPVNVSSRAA",
+    "binder_len": 129,
+    "total_energy": -0.7483900368213654,
+    "source_run": "mt2_bench/4ZQK_PD-L1/nanobody/random_greedy",
+    "cycle": "2372"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_09",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "HLVQLVEQGNGFLHPQNSLLLHCTASGYNFYVTYNIWVCQAAGKGLEWVVNVYPSTKYTRYADHVKGRFEITVDIKAHHAYLGMQKLRAEDTAVHYCSRWNGDGIYWMDYWGVGTLFTVAS",
+    "binder_len": 121,
+    "total_energy": -0.7250617563724517,
+    "source_run": "mt2_bench/4ZQK_PD-L1/4D5/random_greedy",
+    "cycle": "3374"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_10",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "NHKAMLIKLMHQLSNAMCLDRRFGDDQYRTIIEIDHDFVEWC",
+    "binder_len": 42,
+    "total_energy": -0.79796804189682,
+    "source_run": "mt2_bench/4ZQK_PD-L1/random_init/random_greedy",
+    "cycle": "5155"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_11",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "PGKDLVESGGGSVQYMGSKMLSCLAYGYTASINVMTYFRQAPARVREGVAAVSPSGSFPYYADFVKGRFTVSHDTQINTLYLQCNSLKPEDTRLYYCSAARQGHYTPLTNYGYNRWGASTPVNVSSRSA",
+    "binder_len": 129,
+    "total_energy": -0.7213059484958648,
+    "source_run": "mt2_bench/4ZQK_PD-L1/nanobody/random_greedy",
+    "cycle": "1146"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_12",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "MREKKNIYNFLFCKIYHYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYIYI",
+    "binder_len": 93,
+    "total_energy": -1.0364122450351716,
+    "source_run": "mt2_bench/4ZQK_PD-L1/4D5/bandit_grpo",
+    "cycle": "443"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_13",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "HPQDLFVAGGGNVAYQGTISLSCLASGYTASLNQFTWFRQAPAKKREGHAMVIPSVEGPYYADFVKGRFTVSHDTTINMLYLLCDALQVEDTRLYFCSAAMKGHYTPLTNYGHNRWGASTPVNVSQRAA",
+    "binder_len": 129,
+    "total_energy": -0.7541759192943573,
+    "source_run": "mt2_bench/4ZQK_PD-L1/nanobody/random_greedy",
+    "cycle": "4511"
+  },
+  {
+    "name": "4ZQK_PD-L1_top20_14",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "top20",
+    "binder_seq": "HPQDLFVAGGGNVAYQGSISLSCLASGYTASINQFTWFRQAPAKKREGVAMVIPSVPGPYYADFVKGRFTVSHDTAINTLYLLCDALQVEDTRLYFCSAALKGHYTPLTNYGYNRWGASTPVNVSSRAA",
+    "binder_len": 129,
+    "total_energy": -0.7073253452777862,
+    "source_run": "mt2_bench/4ZQK_PD-L1/nanobody/random_greedy",
+    "cycle": "3668"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_15",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "GVVEGKYAPLRWPKAPTALAWEPHARFPSGTDPGHWKYVYRS",
+    "binder_len": 42,
+    "total_energy": -0.03640795648097992,
+    "source_run": "mt2_bench/4ZQK_PD-L1/random_init/bandit_grpo",
+    "cycle": "179"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_16",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MDLGKPLLEAVRLMFDDQVCELMPMGADVNTKDTWGDTIFIFMDNRFYIEQVCQRNVDKDVDERIRALKNNANEPALRWFET",
+    "binder_len": 82,
+    "total_energy": -0.6067935228347778,
+    "source_run": "mt2_bench/4ZQK_PD-L1/ankyrin/random_greedy",
+    "cycle": "5014"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_17",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MDLGKPLLEAVRLMFDDQVCELMPMGADVNTWDTWGDTIFIFMNNRFYIEQVCQRNVDKDVDERIRALKNNANEPALRWFET",
+    "binder_len": 82,
+    "total_energy": -0.07646193020045758,
+    "source_run": "mt2_bench/4ZQK_PD-L1/ankyrin/random_greedy",
+    "cycle": "4028"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_18",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MLAKRVKEGDLEGVIELLEKGADINAKDKYGDTALIHASKNNNLEMVKLLLDNGANINAQNNSGETALFVAARNNHVDVVELLLNAGAKIHSSPI",
+    "binder_len": 95,
+    "total_energy": -0.7264035642147064,
+    "source_run": "mt2_bench/4ZQK_PD-L1/ankyrin/bandit_grpo",
+    "cycle": "432"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_19",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MLQHHVLLQQEDTLRGLAGQEVEMHCHGWGFTFRDMDVDWMRQAPGKGLEWIGFIYTDSNKYYSDSLKGRFTISRDNAKNTLYLQMNSLRTEDSALYYCAKHSRYYNDARGGDTKTCVWSTAVQTCILLVSSASAQNHFLPQIPSAQGQPQSLPPPGLQPPSPPSPCSCSSLWSF",
+    "binder_len": 175,
+    "total_energy": -0.05527075529098511,
+    "source_run": "mt2_bench/4ZQK_PD-L1/nanobody/proposal_bandit",
+    "cycle": "3587"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_20",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MEVQLVESGGGLVQPGGSLRLSCAASGFNIKDTYIHWVRQAPGKGLEWVARIYPTNGYTRYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRWGGDGFHAMDYWGQGTLVTVSS",
+    "binder_len": 121,
+    "total_energy": -0.3691825091838837,
+    "source_run": "mt2_bench/4ZQK_PD-L1/4D5/random_greedy",
+    "cycle": "3377"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_21",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MDLGKPLLEAVRWGSDDQVCNLMPNGADVNTKDAWGATWFIFMNKRYYIEQVCSKNLDKDDDKRIRALKNNATEPALKWFEI",
+    "binder_len": 82,
+    "total_energy": -0.05347944498062134,
+    "source_run": "mt2_bench/4ZQK_PD-L1/ankyrin/random_greedy",
+    "cycle": "2276"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_22",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MERVEQAVRSGDAELVLSLIRRGVDINAVDPYGNTPLVLAASESHYDLARLLLEAGARPDLENRWGHRALDIARLRNDPAMVALLRGAVRPEEVESLG",
+    "binder_len": 98,
+    "total_energy": -0.0764680027961731,
+    "source_run": "mt2_bench/4ZQK_PD-L1/ankyrin/proposal_bandit",
+    "cycle": "3679"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_23",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MDLGKKLLEAVRWGSDDQVRNLMPNGADVNAKDAWGDTAFIHMNKRYYLEQVVAKYLDTDDPNRIELLKNAATEPAIKVFEE",
+    "binder_len": 82,
+    "total_energy": -0.05645034313201905,
+    "source_run": "mt2_bench/4ZQK_PD-L1/ankyrin/random_greedy",
+    "cycle": "1145"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_24",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MDVQLVESGGGSVKAGGSTRLSCAASGYTGSIYYLSNIRQAPGKKREGVAAVSPALGTPYYADSVKGRFTISLDNAENTVYLQMNSLKPEDTALYYCAAARQGWYIPLNDYGYNKSAPGTQVTVSSNGR",
+    "binder_len": 129,
+    "total_energy": -0.5935741364955902,
+    "source_run": "mt2_bench/4ZQK_PD-L1/nanobody/bandit_grpo",
+    "cycle": "260"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_25",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MLVQLVEQGGGFLTPSGSLKLHCGASGFNFYVTYNIWVCQAAGKGLEWVVNVYPVTKYTRYADNVKGRFEITVDIKAHHAYLGMEQLRAEDTAVHKCSRWNGDGIYWMDYWGQGTLFTVSS",
+    "binder_len": 121,
+    "total_energy": -0.6501568198204041,
+    "source_run": "mt2_bench/4ZQK_PD-L1/4D5/random_greedy",
+    "cycle": "2098"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_26",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MDLGKPLLEAVRWGSDDQVRNLMPNGADVNAKDAWGDTWFIHMNKRYYLEQVCAKYLDKWDPNRIELLKNNATEPAIKVFEL",
+    "binder_len": 82,
+    "total_energy": -0.20655734241008758,
+    "source_run": "mt2_bench/4ZQK_PD-L1/ankyrin/random_greedy",
+    "cycle": "1751"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_27",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "KSIFFMYCDMHSWSLQYCRDRRMLDISFRFICRSRMDFNDRF",
+    "binder_len": 42,
+    "total_energy": -0.03635583221912384,
+    "source_run": "mt2_bench/4ZQK_PD-L1/random_init/random_greedy",
+    "cycle": "4797"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_28",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "HLVQLVEQGGGFTFPWNSILLQCTASGYNFYVTYNIWVCQAAGHGLEWLVNVFPSTKYTRYADHVVGRIEITVDIPRMHAYLGMQKLRAEDTAVHYCSRWNGDGIYFMDYWGVGTLLTVAS",
+    "binder_len": 121,
+    "total_energy": -0.6309807300567627,
+    "source_run": "mt2_bench/4ZQK_PD-L1/4D5/random_greedy",
+    "cycle": "4247"
+  },
+  {
+    "name": "4ZQK_PD-L1_random_29",
+    "target_id": "4ZQK_PD-L1",
+    "sample_type": "random",
+    "binder_seq": "MSAVELLKKAVSQDDVAVVRLLLENGADPNIKDENGLTPLHYAIQNNNVDLVKVLLNADITTVQLLLEYGADASAKDEEGNTVFK",
+    "binder_len": 85,
+    "total_energy": -0.06683498620986938,
+    "source_run": "mt2_bench/4ZQK_PD-L1/ankyrin/proposal_bandit",
+    "cycle": "2223"
+  }
+]

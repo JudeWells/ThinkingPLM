@@ -2,300 +2,394 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current Cluster State (2026-04-07)
+## Open-Source Cleanup Guide
 
-### Nodes
+This repo is being cleaned up for open-source publication. The goal is to strip it to the minimal functionality needed to run the current experiments (scaffold comparison + multi-target binder design benchmarks). Below is a detailed guide on what to keep, remove, and refactor.
 
-| Node | IP | Instance | GPUs | Disk Free | Env |
-|------|-----|----------|------|-----------|-----|
-| Node 1 | 3.14.255.102 | p4d.24xlarge | 8x A100-40GB | ~83GB | profam_bagel |
-| Node 2 | 18.191.140.159 | p4d.24xlarge | 8x A100-40GB | ~336GB | profam_bagel |
-| Node 3 | 3.147.78.97 | p4d.24xlarge | 8x A100-40GB | ~112GB | profam_bagel |
-| Node 4 | 3.147.71.187 | p5.4xlarge | 1x H100-80GB | ~82GB | profam_bagel |
+### What the Published Code Should Support
 
-SSH: `ssh -i ~/.ssh/gpu-ml-key.pem ubuntu@<IP>`
+The pipeline iteratively generates protein binder sequences using ProFam (a protein language model), evaluates them via structure prediction (ESMFold) and energy scoring (BAGEL), and selects promising candidates for the next cycle.
 
-### Active Experiments
+**Three optimization methods** to compare:
+1. **Random greedy** — random single-point mutations, greedy selection, 1 sample/cycle
+2. **Proposal bandit** — Thompson bandit chooses between ProFam generation and random mutation, greedy selection, 1 sample/cycle
+3. **Bandit + GRPO** — proposal bandit + GRPO preference optimization, 12 samples/cycle
 
-**1. Scaffold Comparison rep2 (15PGDH / 2GDZ target, ESMFold+LIS)**
-- Config generator: `generate_scaffold_comparison_configs.py --replicate 2`
-- Configs: `configs/pipelines/scaffold_comparison/*_rep2.yaml`
-- 4 scaffolds (affibody_2B87, hairpin, beta_sheet_1E0L, bindcraft_15PGDH) × 4 methods (random_greedy, proposal_bandit, bandit_grpo, bandit_bt)
-- Total evaluations per run: 5400 (1-sample methods: 5400 cycles, 12-sample methods: 450 cycles)
-- Node 1: affibody_2B87 (4 methods) + hairpin (4 methods) — all 8 GPUs
-- Node 2: beta_sheet_1E0L (4 methods) + bindcraft_15PGDH (4 methods) — GPUs 1-3, 5-7 (GPUs 0,4 freed after random_greedy completed)
+**Two experiment types:**
+1. **Scaffold comparison** — 4 scaffolds × 4 methods (includes Bradley-Terry) against a single target (2GDZ/15-PGDH)
+2. **Multi-target benchmark** — 5 targets × 4 scaffolds × 3 methods (no BT)
 
-**2. Multi-target Benchmark (5 targets, ESMFold+LIS)**
-- Config generator: `generate_grpo_multi_target_bench.py`
-- Configs: `configs/pipelines/multi_target_bench/*.yaml`
-- 5 targets × 4 scaffolds × 3 methods = 60 configs total
-- Targets: 2VSM_nipah, 4OYD_epstein_barr, 4ZQK_PD-L1, 1TNF_TNF_alpha, 1YCR_MDM2
-- Scaffolds: 4D5, ankyrin, nanobody, random_init
-- Methods: random_greedy, proposal_bandit, bandit_grpo
-- Node 2 GPUs 0,4: TNF_alpha random_init (bandit_grpo, proposal_bandit)
-- Node 3: all 8 GPUs — TNF_alpha (4D5, ankyrin, nanobody configs)
-- Node 4: 1 GPU — TNF_alpha random_init random_greedy
-- 13/60 configs launched so far; remaining 47 to backfill as GPUs free up
+**Energy function:** ESMFold (BatchedESMFold oracle) + LIS energy (weight 1.0) + optional PLDDT (weight 0.1)
 
-### Disk Maintenance
-- `.pae` files are the main disk consumer (~1MB each, 65GB+ at scale). Delete periodically.
-- `.cif` files are secondary (~250KB each). Safe to delete.
-- Old sweep dirs (`sweep_v5/`, `sweep_v6/`, `bt_*/`) can be deleted after results are captured.
+### Files to KEEP (Core)
 
-## Quick Start for Agents (AWS/Cloud)
+| File | Purpose | Notes |
+|------|---------|-------|
+| `run_profam_bagel_pipeline.py` | Main pipeline (~3800 lines) | Needs significant simplification (see below) |
+| `pipeline/bandits.py` | ThompsonSampler, ProposalBandit | TemperatureBandit class can be removed |
+| `pipeline/grpo.py` | GRPO training step | Keep as-is |
+| `pipeline/bradley_terry.py` | Bradley-Terry preference learning | Keep as-is |
+| `pipeline/selection.py` | GreedyPromptSelector, SelectionManager | ThompsonPromptSelector unused in current experiments but simple to keep |
+| `pipeline/proposal.py` | ProFam and RandomMutation proposal generators | Keep as-is |
+| `pipeline/logging.py` | Cycle stats logging, CSV export, structure saving | Keep as-is |
+| `pipeline/plotting.py` | Energy summary plots | Keep as-is |
+| `pipeline/utils.py` | Sequence identity, reward extraction, softmax | Keep as-is |
+| `pipeline/__init__.py` | Package imports | Remove ColabFold, TemperatureBandit imports |
+| `generate_scaffold_comparison_configs.py` | Scaffold comparison config generator | Keep as-is |
+| `generate_grpo_multi_target_bench.py` | Multi-target bench config generator | Keep as-is |
+| `setup_environment.sh` | Conda environment setup | Keep as-is |
+| `setup_cloud.sh` | Cloud instance one-command setup | Keep as-is |
+| `configs/energy/energy_lis_plddt_*.yaml` | ESMFold + LIS + PLDDT energy configs (6 files) | Active configs |
+| `configs/energy/energy_lis_*_local.yaml` | ESMFold + LIS only configs | For reference/backward compat |
+| `configs/sequences/*.fasta` | Starting scaffold sequences | Keep all |
+| `configs/pipelines/scaffold_comparison/` | Generated pipeline configs | Keep |
+| `configs/pipelines/multi_target_bench_mt2/` | MT2 bench configs | Keep |
 
-**Goal:** Get the pipeline running as fast as possible on a fresh cloud instance.
+### Files to REMOVE
 
-### Recommended AWS Instance Types
+| File/Directory | Reason |
+|----------------|--------|
+| `run_profam_bagel_modal_app.py` | Modal cloud execution — not used (run_on_modal=false everywhere) |
+| `modal_proteinmpnn_score.py` | Legacy Modal SolMPNN scoring — superseded by the local subprocess backend shipped with BAGEL (`bagel.scripts.proteinmpnn_scorer`) |
+| `pipeline/colabfold_oracle.py` | ColabFold oracle — not used in current experiments |
+| `pipeline/batched_esmfold.py` | Replaced by BAGEL's built-in BatchedESMFold |
+| `pipeline/temperature_bo.py` | Temperature Bayesian optimization — never used |
+| `slurm_scripts/` (247 files) | Auto-generated SLURM scripts from old benchmarks |
+| `slurm_*.sh`, `submit_all_*.sh` | Legacy SLURM submission scripts |
+| `run_all_bench*.sh` | Legacy benchmark runners |
+| `generate_2gdz_campaign_configs.py` | Superseded by scaffold_comparison generator |
+| `generate_proposal_bandit_bench.py` | Superseded |
+| `generate_ensemble_benchmark_configs.py` | Superseded |
+| `generate_greedy_diverse_configs.py` | Superseded |
+| `generate_thompson_eb8_configs.py` | Superseded |
+| `generate_benchmark_configs.py` | Superseded |
+| `create_greedy_slurm.py` | Legacy |
+| `run_grpo_hp_sweep.py`, `_v2.py`, `_v3.py` | Superseded by v4 |
+| `run_hp_search.py` | Legacy Optuna HP search |
+| `analyze_*.py` (all) | Analysis scripts — keep separately if needed |
+| `simulate_thompson*.py` (3 files) | Thompson sampling simulations |
+| `experiment_boltz_vs_colabfold.py` | Legacy experiment |
+| `test_boltz_determinism.py`, `test_ipsae_agreement.py` | Legacy tests |
+| `diagnose_temperature_bo.py` | Legacy diagnostic |
+| `benchmark_boltz_samples.py` | Legacy benchmark |
+| `random_scripts/` | Campaign plotting/animation (can archive separately) |
+| `berlin_hack_bio/` | Hackathon-specific code |
+| `hp_search/` | HP search results |
+| `configs/pipelines/benchmark_v0/` (132 files) | Legacy benchmark configs |
+| `configs/pipelines/benchmark_v1/` | Empty |
+| `configs/pipelines/2gdz_campaign/` (52 files) | Legacy campaign configs |
+| `configs/pipelines/multi_target_bench/` | MT1 configs (superseded by mt2) |
+| `configs/energy/example_energy_*.yaml` | Legacy example energy configs |
+| `configs/energy/energy_boltz_*.yaml` | Boltz oracle configs — not used |
+| `configs/energy/energy_colabfold_*.yaml` | ColabFold configs — not used |
+| `docs/` | Internal design docs (review for useful content first) |
+| `smoke_test.db` | Test artifact |
+| `template.cif` | Test artifact |
 
-| Use Case | Instance Type | GPU | vCPU | Memory | Notes |
-|----------|---------------|-----|------|--------|-------|
-| **Local GPU runs** | `g5.xlarge` | A10G (24GB) | 4 | 16 GB | Best cost/performance for Boltz/ESMFold |
-| **Large batches** | `g5.2xlarge` | A10G (24GB) | 8 | 32 GB | More CPU for parallel preprocessing |
-| **Modal offload** | `t3.medium` | None | 2 | 4 GB | Cheapest; all GPU work on Modal cloud |
-| **Development** | `g4dn.xlarge` | T4 (16GB) | 4 | 16 GB | Budget option, slower folding |
+### Simplifying `run_profam_bagel_pipeline.py`
 
-**AMI:** Use "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)" or similar with CUDA pre-installed.
+The main file is ~3800 lines. Key simplifications:
 
-### One-Command Setup (Fresh Instance)
+**PipelineConfig fields to REMOVE** (unused in all active configs):
+- `annealing_initial_temp`, `annealing_decay` — simulated annealing, never used
+- `thompson_temperature_bins` — temperature bandit, always null
+- `run_on_modal` — Modal cloud execution, always false
+- `profam_max_generated_length` — always null
+- All Modal-related code paths
 
-```bash
-# 1. Clone and enter repo
-git clone https://github.com/JudeWells/ThinkingPLM.git && cd ThinkingPLM
+**PipelineConfig fields to KEEP:**
+- Core: `initial_fasta`, `energy_config`, `max_cycles`, `output_dir`, `random_seed`
+- ProFam: `profam_checkpoint_dir`, `profam_sampler`, `profam_num_samples`, `profam_max_tokens`, `profam_temperature`, `profam_top_p`
+- Sampling: `f_inject`, `softmax_temperature`, `sample_with_reinsertion`, `reinject_initial`
+- Anti-regression: `elitism`, `accept_only_improvement`
+- Proposal: `proposal_method`, `max_mutations`, `freeze_prompt`
+- Selection: `selection_strategy`, `thompson_m_samples`, `thompson_reward_term`, `thompson_exploit_bias`
+- Proposal bandit: `thompson_proposal_bandit`, `proposal_bandit_prior_alpha/beta`, `proposal_bandit_relative_reward`
+- Diversity: `thompson_max_arms`, `thompson_max_identity`, `deduplicate_sequences`
+- GRPO: `grpo_enabled`, `grpo_lr`, `grpo_beta`, `grpo_clip_ratio`, `grpo_temperature`, `grpo_group_size`, `grpo_replay_cycles`, `grpo_use_reference_model`, `rl_every_n_cycles`, `rl_steps_per_cycle`
+- BT: `bt_enabled`, `bt_lr`, `bt_pool_size`, `bt_batch_size`, `bt_sub_batch_size`, `bt_every_n_cycles`, `bt_steps_per_cycle`
+- Logging: `output_frequency`, `wandb_enabled`, `wandb_project`, `wandb_run_name`, `wandb_tags`, `save_structures`
+- Random init: `random_init`, `random_init_max_residues`
+- Template: `enforce_template`, `n_memory`
+- Likelihood tracking: `likelihood_eval_every`, `likelihood_track_n`
 
-# 2. Run cloud setup (installs miniconda if needed, creates env, downloads model)
-chmod +x setup_cloud.sh && ./setup_cloud.sh
+**Code blocks to REMOVE from `run_profam_bagel_pipeline.py`:**
+- All Modal-related functions and code paths (`run_on_modal`, `force_modal_folding`, Modal volume sync)
+- Temperature bandit initialization and selection (search for `temp_bandit`)
+- Simulated annealing logic (search for `annealing`)
+- AlphaFast oracle code paths
+- `profam_max_generated_length` handling
+- The `checkpoint_callback` parameter (Modal-specific)
 
-# 3. Activate and run
-source ~/.bashrc && conda activate profam_bagel
-python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_campaign6_hairpin_elite.yaml
+SolMPNN scoring is handled by BAGEL's `SolMPNNPerplexityEnergy` (see section below) and does not need pipeline-level code.
+
+**Code blocks to KEEP (critical pipeline logic):**
+- Config loading: `PipelineConfig`, `build_arg_parser()`, `merge_config()`
+- Model loading: `load_profam_model()`, `run_profam_generation()`
+- Evaluation: `build_folding_oracle()`, `build_energy_terms_for_chain()`, `evaluate_sequences_with_bagel()`
+- Sampling: `softmax_from_energies()`, `sample_subset_indices()`
+- Temperature adjustment: `adjust_temperature()` (gated on profam only)
+- Main loop: `run_pipeline()` — generate → fold+score → dedup → select → elitism/swap → inject
+- Dedup retry logic with escalating max_mutations for random_mutation
+- Random init with cysteine exclusion and retry on folding failure
+- GRPO and BT training steps within the main loop
+- Proposal bandit selection and update
+- Adaptive temperature (for profam proposals only)
+
+### Pipeline Architecture (for reference during refactoring)
+
+```
+run_pipeline(cfg)
+  ├── Load ProFam model
+  ├── Build folding oracle (BatchedESMFold from BAGEL)
+  ├── Load energy config (LIS + optional PLDDT)
+  ├── Read initial sequences (from FASTA or random_init)
+  ├── Evaluate seed sequences (with retry for random_init)
+  ├── Initialize Thompson/proposal bandits (if enabled)
+  ├── Initialize GRPO/BT optimizers (if enabled)
+  │
+  └── Main loop (for cycle in 1..max_cycles):
+      ├── Proposal bandit selects method (profam or random_mutation)
+      ├── Generate sequences (ProFam or random mutation)
+      ├── Deduplicate against seen_sequences cache
+      │   ├── Retry loop (10 for profam, 500 for random_mutation)
+      │   ├── Escalating max_mutations every 20 retries (random only)
+      │   └── Adaptive temperature adjustment (profam only)
+      ├── Evaluate novel sequences with BAGEL (fold + energy)
+      ├── Merge novel + cached results
+      ├── Softmax selection → injection set
+      ├── Elitism: preserve global best
+      ├── Accept/reject swap (accept_only_improvement)
+      ├── Update proposal bandit with improvement signal
+      ├── GRPO/BT training step (if enabled, on profam cycles)
+      ├── Log cycle stats, update CSV
+      └── Periodic: generate energy plot, checkpoint
 ```
 
-### Step-by-Step Setup (If One-Command Fails)
+### SolubleMPNN (SolMPNN) Perplexity Energy
+
+`SolMPNNPerplexityEnergy` scores how well a binder sequence matches a given
+backbone using SolubleMPNN's autoregressive perplexity — a proxy for
+designability / foldability. Lower = better. It works with any folding oracle
+(ESMFold, Boltz, Chai-1, AF2BindCraft) because it only reads the predicted
+structure from `oracles_result`.
+
+**Implementation (local subprocess backend):**
+
+The energy lives in the BAGEL package (`bagel/energies.py`) and calls a
+bundled standalone scorer at `bagel/scripts/proteinmpnn_scorer.py`. Because
+ProteinMPNN has its own dependency stack that conflicts with BAGEL/Boltz, the
+scorer runs in an isolated conda env via `conda run -n <proteinmpnn_env>`.
+
+Required setup:
+1. Clone ProteinMPNN: `git clone https://github.com/dauparas/ProteinMPNN.git /mnt/disk2/ProteinMPNN`
+2. Create a conda env with torch + numpy that can import ProteinMPNN (the
+   existing `proteinmpnn` env works).
+3. Point `SolMPNNPerplexityEnergy` at both via `proteinmpnn_env` and
+   `proteinmpnn_path` kwargs.
+
+**Hyperparameters (local mode):**
+
+- `backbone_noise` (float, default 0.0) — Gaussian std applied to backbone
+  coordinates each forward pass (`augment_eps` in ProteinMPNN). Use >0 to
+  propagate structural uncertainty into the score.
+- `ensemble_n` (int, default 10) — number of forward passes. Each pass uses
+  an **independent backbone-noise draw** and an **independent decoding
+  order**. The perplexity is `exp(mean NLL)` across passes.
+- `decoding_order` (str, default `"random"`) — `"random"` draws fresh
+  decoding-order noise each pass; `"fixed:<seed>"` is deterministic.
+- `residues` — specifies which chain(s) the perplexity is computed on
+  (typically the GEN/binder chain). Residues on other chains are visible to
+  the encoder but don't contribute to the loss.
+
+**Complex-context scoring (default):**
+
+The energy is always evaluated on whatever structure the folding oracle
+produced. In standard binder campaigns the oracle folds `binder + target`
+together, so SolMPNN sees the full complex and the encoder has access to the
+target residues as "binding context" — even though only the binder residues
+enter the loss. This is the intended behaviour for interface-aware design.
+
+**Validation on a real heterodimer (1YCR, p53 peptide bound to MDM2):**
+
+To verify that the target context meaningfully changes the perplexity, we
+ran `test_mpnn_context_significance.py` which scores the p53 peptide
+(13 aa, chain B of 1YCR) under two conditions with 10 repeats of 10
+ensemble passes each (backbone_noise=0.1):
+
+| Condition | Mean perplexity | Std | t-stat vs monomer |
+|---|:---:|:---:|:---:|
+| p53 peptide alone (monomer) | **16.57** | 0.19 | — |
+| p53 peptide in MDM2 context (complex) | **4.47** | 0.07 | **-188** |
+
+The 73% drop in perplexity when the MDM2 context is visible confirms that
+SolMPNN treats the p53 residues as "justified" specifically because they
+pack against the MDM2 binding groove. Natural interface motifs can be very
+hard to "design" in isolation but highly designable in context. This is
+far outside the natural ensemble variance (std ~0.07-0.19) and validates
+that the complex-context pipeline is working correctly.
+
+Always evaluate SolMPNN in the full-complex context for binder design —
+monomer-only scoring would penalise legitimate interface sequences.
+
+### Multi-Oracle Energy Configs
+
+The pipeline supports energy configs that span **multiple folding oracles**
+simultaneously (ESMFold, Boltz2, Chai-1, AF2BindCraft). Each energy term in
+the YAML can reference a named oracle via an `oracle:` key, so you can
+extract the same metric (pLDDT, iPTM, ipSAE, SolMPNN) from every predictor.
+
+**Schema:**
+
+```yaml
+folding_oracles:              # plural — map of name → oracle spec
+  esmfold:
+    type: BatchedESMFold
+    kwargs: {use_modal: false}
+  boltz2:
+    type: Boltz
+    kwargs:
+      diffusion_samples: 5    # Boltz averages 5 samples inside the oracle
+      recycling_steps: 3
+  chai1:
+    type: Chai1
+    kwargs:
+      num_diffn_samples: 3    # Chai-1 native ensemble
+      num_trunk_recycles: 3
+  af2:
+    type: AF2BindCraft
+    kwargs:
+      target_pdb: /path/to/target.pdb
+      target_chain: A
+      conda_env: BindCraft
+      num_recycles: 3
+      prediction_models: [0, 1]
+
+energies:
+  - type: iPTMEnergy
+    oracle: boltz2            # per-term oracle reference
+    kwargs: {weight: 0.05, name: b2}
+  - type: iPTMEnergy
+    oracle: chai1
+    kwargs: {weight: 0.05, name: chai}
+  # … etc.
+```
+
+**Implementation notes:**
+
+- The legacy single `folding_oracle:` (singular) schema is still supported
+  for backwards compatibility — if the plural form is absent, the old
+  single-oracle path is used unchanged.
+- Energy terms without an explicit `oracle:` key fall back to the first
+  oracle in `folding_oracles`.
+- Every sequence is folded by every oracle referenced by any energy term
+  (plus one `torch.cuda.empty_cache()` between oracle calls to stop
+  in-process models from OOM-ing each other).
+- **Each oracle returns exactly one `FoldingResult` per sequence.**
+  Internal ensembling (Boltz `diffusion_samples`, Chai-1 `num_diffn_samples`,
+  AF2 `prediction_models`) is absorbed inside the oracle and metrics are
+  averaged into a single result before the energy terms see them.
+- The old pipeline-level `boltz_ensemble_n` field and `run_boltz_ensemble`
+  helper have been **removed**. To run multiple Boltz diffusion samples,
+  set `diffusion_samples: N` in the Boltz oracle's `kwargs`. Doing it at
+  the oracle level means each oracle in a multi-oracle config can specify
+  its own ensemble size independently.
+- The Boltz oracle's `fold()` method now parses all N samples internally
+  when `diffusion_samples > 1`, averages the scalar/tensor metrics
+  (pTM, iPTM, pLDDT, PAE), and returns a single averaged `BoltzResult`
+  (structure taken from sample 0 since averaging coordinates is
+  meaningless).
+- **Memory budget**: running ESMFold + Chai-1 together in-process needs
+  a GPU with >24 GB (ESMFold alone takes ~15–20 GB). On a 40 GB A100 this
+  is fine. Boltz and AF2BindCraft use subprocess-isolated processes so
+  they do not share main-process GPU memory.
+
+### Key Design Decisions
+
+- **1 sample per cycle** for random_greedy and proposal_bandit (immediate feedback)
+- **12 samples per cycle** for GRPO (needs group for preference optimization)
+- **5400 total evaluations** per run (equal budget: 5400×1 or 450×12)
+- **`max_mutations=1`** — single point mutations only (escalates during dedup exhaustion)
+- **`save_structures=false`** by default — CIF/PAE files consume ~65GB per experiment
+- **`enforce_template=false`** for multi-target, `true` for scaffold_comparison
+- **Cysteine excluded** from random_init sequences (causes ESMFold failures)
+- **Temperature only adjusted for profam proposals** (random_mutation ignores temperature)
+- **SolMPNN always sees the complex context** (not monomer) for binder scoring
+
+### Tests to KEEP
+
+| Test | Purpose |
+|------|---------|
+| `test_grpo_synthetic.py` | Validates GRPO training on synthetic copy/shift tasks |
+| `test_encoder_decoder_grpo.py` | Tests encoder-decoder GRPO compatibility |
+| `test_dedup_fixes.py` | Validates deduplication logic and novel_mask fix |
+| `test_mpnn_context_significance.py` | Validates SolMPNN complex-vs-monomer context on 1YCR |
+
+### Dependencies
+
+BAGEL (`biobagel`) and ProFam have conflicting numpy pins. Install order matters:
+1. BAGEL first (pins numpy, torch, transformers)
+2. ProFam in editable mode (from `.profam_repo/`)
+3. Force `numpy==1.26.4` last (numba requires <2.2, boltz requires <2.0, but both work with 1.26.4)
+4. `modal` pinned to `0.73.45` to avoid deprecation errors in boileroom
+
+See `setup_environment.sh` for the full installation sequence.
+
+## Quick Start
 
 ```bash
-# 1. Ensure conda is available
-if ! command -v conda &> /dev/null; then
-    wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
-    bash /tmp/miniconda.sh -b -p $HOME/miniconda3
-    eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
-    conda init bash
-    source ~/.bashrc
-fi
-
-# 2. Clone repo
-git clone https://github.com/JudeWells/ThinkingPLM.git
-cd ThinkingPLM
-
-# 3. Create environment
+# Setup
 chmod +x setup_environment.sh && ./setup_environment.sh
-
-# 4. Activate environment
 conda activate profam_bagel
 
-# 5. Download ProFam model checkpoint (~3GB)
-python -c "from huggingface_hub import snapshot_download; snapshot_download('alex-hh/profam-1', local_dir='.profam_repo/model_checkpoints/profam-1')"
+# Run scaffold comparison (single run)
+python run_profam_bagel_pipeline.py --config configs/pipelines/scaffold_comparison/hairpin_random_greedy_rep3.yaml
 
-# 6. (Optional) Setup Modal for cloud GPU
-modal token new
-modal secret create huggingface-secret HF_TOKEN=hf_xxxxx
-
-# 7. Verify installation
-python -c "import bagel; import profam; from src.models.inference import ProFamSampler; print('OK')"
-```
-
-### Verify GPU Access
-
-```bash
-# Check NVIDIA driver
-nvidia-smi
-
-# Check PyTorch sees GPU
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}, Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}')"
-```
-
-### Common Cloud Issues
-
-| Problem | Solution |
-|---------|----------|
-| `conda: command not found` | Install miniconda: `wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash Miniconda3-latest-Linux-x86_64.sh -b` |
-| `CUDA out of memory` | Reduce `profam_num_samples` in config, or use Modal (`run_on_modal: true`) |
-| `No CUDA GPUs available` | Check `nvidia-smi`; may need `sudo nvidia-smi -pm 1` or driver install |
-| `libcudnn.so not found` | Install cuDNN: `conda install cudnn -c conda-forge` |
-| `Permission denied` on model download | Set `HF_TOKEN` env var or run `huggingface-cli login` |
-| Slow first run | Normal—ProFam/Boltz models download on first use (~10-15 min) |
-
-### Running Modes Quick Reference
-
-```bash
-# Modal cloud (recommended for most users) - GPU work happens on Modal's servers
-python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_campaign6_hairpin_elite.yaml
-
-# Local GPU (requires g5/g4dn instance)
-# Set run_on_modal: false in config YAML first
-export MODEL_DIR=~/.cache/bagel/models
-python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_berlin_hairpin_start.yaml
-
-# Check a run's progress
-tail -f outputs/campaign_name/cycle_stats.json
-```
-
----
-
-## Project Overview
-
-ProFam + BAGEL generative protein design pipeline. Iteratively generates protein sequences with a language model (ProFam), evaluates them via structure prediction and energy scoring (BAGEL/Boltz), and selects promising candidates for the next cycle. Current target: designing protein binders against **15-PGDH** (15-Hydroxyprostaglandin Dehydrogenase, PDB: 2GDZ) for the Berlin Bio x AI Hackathon.
-
-## Key Commands
-
-### Environment Setup
-```bash
-chmod +x setup_environment.sh && ./setup_environment.sh
-# Creates conda env "profam_bagel" with Python 3.11, installs BAGEL from GitHub, ProFam from cloned repo
-conda activate profam_bagel
-```
-
-### Running the Pipeline
-```bash
-# Modal cloud (set run_on_modal: true in config YAML) — primary mode
-python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_campaign6_hairpin_elite.yaml
-
-# Local (requires GPU)
-python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_berlin_hairpin_start.yaml
+# Generate all configs
+python generate_scaffold_comparison_configs.py --replicate 1
+python generate_grpo_multi_target_bench.py --variant mt2
 
 # CLI flags override YAML values
-python run_profam_bagel_pipeline.py --config configs/pipelines/pipeline_campaign6_hairpin_elite.yaml --max_cycles 5
+python run_profam_bagel_pipeline.py --config <config.yaml> --max_cycles 5 --wandb_enabled false
 ```
-
-### Visualization
-```bash
-# Plot energy curves for all campaigns (dark mode)
-python plot_campaigns.py
-
-# Animate best structure per cycle using PyMOL
-python animate_campaign.py outputs/campaign12_tiny_barrel_elite
-# Options: --width 1200 --height 900 --delay 50
-```
-
-### Modal Setup
-```bash
-modal token new
-modal secret create huggingface-secret HF_TOKEN=hf_xxxxx
-```
-
-### PyMOL
-Binary at `/home/judewells/miniconda3/bin/pymol`. Used headless (`-cq`) for rendering animations.
-
-## Architecture
-
-### Core Files
-
-**`run_profam_bagel_pipeline.py`** (~2400 lines) — the entire pipeline in one file:
-- `PipelineConfig` dataclass + `build_arg_parser()` + `merge_config()` — config loading (YAML + CLI merge)
-- `load_profam_model()` / `run_profam_generation()` — ProFam model loading and sequence generation
-- `build_folding_oracle()` / `build_energy_terms_for_chain()` / `evaluate_sequences_with_bagel()` — BAGEL folding and energy evaluation
-- `softmax_from_energies()` / `sample_subset_indices()` / `update_cycle_log()` — sampling, statistics, logging
-- `make_energy_summary_plot()` — per-run energy plot (dark mode, cumulative min trace)
-- `run_pipeline()` — main loop (generate → fold+score → probabilities → select → elitism/swap → inject)
-
-**`run_profam_bagel_modal_app.py`** — Modal cloud wrapper. Builds a container image, runs `run_pipeline()` remotely, syncs results via Modal Volume.
-
-**`modal_proteinmpnn_score.py`** — Standalone Modal app for SolubleMPNN scoring. Runs in isolated container with numpy 1.x / torch 2.2.1 to avoid dependency conflicts.
-
-**`plot_campaigns.py`** (in `random_scripts/`) — Plots energy term curves for all campaigns. Generates per-term breakdowns and accepted-best plots for campaigns with elitism.
-
-**`animate_campaign.py`** (in `random_scripts/`) — Creates animated GIFs of best structure per cycle using PyMOL. Colors by chain (cyan=binder, orange=target), aligns with `super`, renders both black and white backgrounds.
-
-### Configuration System
-
-All configs live under `configs/` with three subdirectories:
-- `configs/pipelines/` — pipeline YAML configs (ProFam settings, cycle count, injection fraction, anti-regression)
-- `configs/energy/` — energy YAML configs (folding oracle type and energy terms with weights)
-- `configs/sequences/` — initial FASTA sequences for each scaffold
-
-Two YAML files drive each run:
-1. **Pipeline config** (e.g., `configs/pipelines/pipeline_campaign6_hairpin_elite.yaml`)
-2. **Energy config** (referenced by `energy_config` key, e.g., `configs/energy/example_energy_boltz_ipsae_2GDZ.yaml`)
-
-Energy config structure:
-```yaml
-folding_oracle:
-  type: Boltz           # or ESMFold
-  kwargs: {}
-energies:
-  - type: ipSAEEnergy   # or LISEnergy, PTMEnergy, ChemicalPotentialEnergy, etc.
-    kwargs:
-      weight: 1.0
-      residues:
-        GEN: "all"
-        B: "all"
-```
-
-The pipeline saves a `pipeline_config.json` snapshot to the output folder at the start of each run for reproducibility.
-
-### Multi-Chain Design
-
-For binding design, energy configs specify multiple chains with residue ranges:
-- `GEN` chain = the generated sequence (binder)
-- Named chains (B, etc.) = target proteins (sequence provided in energy config `target` field)
-- Boltz/ESMFold receives all chains joined with `":"` separator
-
-### Anti-Regression Mechanisms
-
-Two features prevent energy from getting worse across cycles:
-
-- **Elitism** (`elitism: true`): Tracks the global best sequence ever seen. Guarantees it position 0 in the injection set (survives token-budget trimming which trims from the end).
-- **Conditional swap** (`accept_only_improvement: true`): Only updates the injection set when the new candidate's best energy improves over the previous. Optional simulated annealing via `annealing_initial_temp` / `annealing_decay`.
-
-Both default to `False`. Swap decisions are logged in `cycle_stats.json` (`swap_accepted`, `swap_reason`, `global_elite`).
-
-### Other Key Mechanisms
-
-- **Constrained generation**: `enforce_template: true` forces specific residues via ProFam's logits processor; `false` assigns inf energy on mismatch
-- **Memory pooling**: `n_memory > 0` includes sequences from previous N cycles in the selection pool
-- **Residue spec notation**: `"0-43"`, `"1,2,5"`, `"0-5,10,20-25"`, `"all"`
-- **PDB caching**: structures cached in `~/.cache/profam_bagel/pdb/`
-- **ProFam diversity**: Seed is set once at model load (not per cycle), so repeated prompts still produce diverse sequences via stochastic sampling (`do_sample=True`, `top_p`, `temperature`)
-
-## BAGEL Energy System
-
-Energy terms live in the BAGEL library (installed package). The pipeline dynamically dispatches by type name from YAML config.
-
-**Oracle types:** `ESMFold`, `Boltz`, `AlphaFast`
-
-**Key energy terms for binder design:**
-- `ipSAEEnergy` — interface quality from PAE matrix (primary binding metric, values ~-0.3 to -0.7 for binders)
-- `SolMPNNPerplexityEnergy` — sequence designability via ProteinMPNN (runs on separate Modal app)
-- `ChemicalPotentialEnergy` — size penalty: `weight * chemical_potential * |num_residues - target_size|^power`
-- `GlobularEnergy` — compactness (minimizes spread of backbone atoms from centroid)
-- `LISEnergy`, `PTMEnergy`, `PLDDTEnergy`, `PAEEnergy` — standard structure quality metrics
-
-**Weight calibration:** ipSAE energies are ~0.3-0.5 magnitude. When combining with other terms, scale weights so contributions are similar (e.g., ChemicalPotentialEnergy weight=0.025 with target_size=240 gives ~0.45 at 18 residues deviation).
-
-## Active Campaigns
-
-Campaign configs are in `configs/pipelines/` following pattern `pipeline_campaign{N}_{scaffold}_{features}.yaml`. Current campaigns target 2GDZ with various scaffolds and energy combinations. All use `elitism: true` + `accept_only_improvement: true`.
-
-Initial FASTA files are in `configs/sequences/`: hairpin (80aa), rfd3_inpaint (80aa), nanobody_like (63aa), tiny_barrel (87aa), repebody_7YC0 (258aa), short_helix, 3helix_bundle, ankyrin_repeat, human_single_domain_antibody_4D5.
-
-## Plotting Convention
-
-All plots use `plt.style.use("dark_background")` with black backgrounds and bright colors (`#00bfff` cyan, `#ff6b6b` red, `#00e676` green, `#ffab40` orange). Save with `facecolor="black", edgecolor="none"`.
 
 ## Output Structure
 
 Each run writes to `output_dir/`:
 - `pipeline_config.json` — full config snapshot for reproducibility
 - `cycle_stats.json` — per-cycle energies, similarities, swap decisions, elite tracking
-- `sequences_cycle_XXX/` — CIF structures for selected sequences (`sequence_0000.cif` = best)
-- `energy_summary.png` — energy vs cycle plot (dark mode, with cumulative min and rejected swap markers)
-- `animation_white.gif` / `animation_black.gif` — structural evolution animations (generated by `animate_campaign.py`)
+- `all_sequences.csv` — all evaluated sequences across all cycles
+- `energy_summary.png` — energy vs cycle plot (dark mode)
+- `cycle_NNN/profam_input.fasta` — the prompt sequence used for each cycle
 
-## Dependencies
+## Configuration System
 
-BAGEL and ProFam have conflicting pins for numpy, matplotlib, and transformers. The setup script installs BAGEL first (stricter pins), then ProFam in editable mode. ProFam is cloned into `.profam_repo/`. SolubleMPNN runs in a separate Modal container to avoid conflicts.
+Two YAML files drive each run:
+1. **Pipeline config** — ProFam settings, method selection, cycle count, anti-regression
+2. **Energy config** (referenced by `energy_config` key) — folding oracle type and energy terms with weights
 
-## Environment Variables
+Energy config structure:
+```yaml
+folding_oracle:
+  type: BatchedESMFold
+  kwargs:
+    use_modal: false
+    max_batch_size: 16
+energies:
+  - type: LISEnergy
+    kwargs:
+      weight: 1.0
+      pae_cutoff: 12.0
+      intensive: true
+      target: <TARGET_SEQUENCE>
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: PLDDTEnergy  # optional
+    kwargs:
+      weight: 0.1
+      residues:
+        GEN: "all"
+```
 
-- `MODEL_DIR` — path to ESMFold weights (default: `~/.cache/bagel/models`)
-- `HF_TOKEN` — HuggingFace token for gated model downloads (Modal uses `huggingface-secret`)
+Multi-chain design: `GEN` chain = binder, `B` chain = target. ESMFold receives chains joined with `":"` separator.

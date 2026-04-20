@@ -103,25 +103,6 @@ def compute_avg_sequence_similarity(
     return float(np.mean(best_sims))
 
 
-def extract_reward_term(
-    details: Sequence[Dict[str, Any]],
-    term_name: str,
-) -> List[float]:
-    """Extract per-sequence values for a named energy term from evaluation details.
-
-    Returns a list parallel to ``details``. If a sequence has no valid value
-    for the term (e.g. folding failure), ``float('inf')`` is returned.
-    """
-    values: List[float] = []
-    for d in details:
-        if d and isinstance(d, dict) and "energy_terms" in d:
-            val = d["energy_terms"].get(term_name, float("inf"))
-            values.append(float(val))
-        else:
-            values.append(float("inf"))
-    return values
-
-
 def softmax_from_energies(
     energies: Sequence[float],
     temperature: float = 1.0,
@@ -199,3 +180,78 @@ def sample_subset_indices(
         f"non-zero probability); falling back to best candidate (index {best_idx})."
     )
     return np.asarray([best_idx], dtype=int)
+
+
+def _ipsae_d0(L: float) -> float:
+    """Yang & Skolnick (2004) d0, clamped to match Dunbrack ipSAE reference."""
+    L = max(L, 27.0)
+    return max(1.24 * (L - 15.0) ** (1.0 / 3.0) - 1.8, 1.0)
+
+
+def _ipsae_one_direction(
+    pae: np.ndarray,
+    source_indices: np.ndarray,
+    target_indices: np.ndarray,
+    pae_cutoff: float,
+) -> float:
+    """Asymmetric ipSAE (source -> target). Max over source residues.
+
+    For each source residue i:
+      - partners j = {j in target : pae[i,j] < pae_cutoff}
+      - n_i = |partners|; d0_i = _ipsae_d0(n_i)
+      - score_i = mean_j 1 / (1 + (pae[i,j] / d0_i)^2)
+    Returns max_i score_i.
+    """
+    if len(source_indices) == 0 or len(target_indices) == 0:
+        return 0.0
+
+    pae_cross = pae[np.ix_(source_indices, target_indices)]
+    valid_mask = pae_cross < pae_cutoff
+    n_partners = valid_mask.sum(axis=1).astype(np.float64)
+
+    has_partners = n_partners > 0
+    if not np.any(has_partners):
+        return 0.0
+
+    per_res_scores = np.zeros(len(source_indices), dtype=np.float64)
+    for i in range(len(source_indices)):
+        if not has_partners[i]:
+            continue
+        d0_i = _ipsae_d0(float(n_partners[i]))
+        partner_pae = pae_cross[i, valid_mask[i]]
+        ptm_scores = 1.0 / (1.0 + (partner_pae / d0_i) ** 2)
+        per_res_scores[i] = ptm_scores.mean()
+
+    return float(np.max(per_res_scores))
+
+
+def compute_ipsae(
+    pae: np.ndarray,
+    chain_a_indices: np.ndarray | Sequence[int],
+    chain_b_indices: np.ndarray | Sequence[int],
+    pae_cutoff: float = 10.0,
+) -> float:
+    """Compute ipSAE (Dunbrack `ipsae_d0res` variant) from a PAE matrix.
+
+    Reference: Dunbrack Lab, "Res ipSAE loquunt" (2025),
+    https://github.com/DunbrackLab/IPSAE. Mirrors
+    ``bagel.energies.ipSAEEnergy`` so scores are directly comparable to
+    pipeline-time ``ipSAE`` energy values.
+
+    Higher is better; bounded in [0, 1]. Values > 0.6 suggest likely binding.
+
+    Parameters
+    ----------
+    pae : np.ndarray
+        Square PAE matrix of shape [n_residues, n_residues] in Angstroms.
+    chain_a_indices, chain_b_indices : array-like of int
+        Residue indices (rows/cols of ``pae``) for each chain.
+    pae_cutoff : float
+        PAE threshold below which a residue pair is considered interface.
+    """
+    pae = np.asarray(pae)
+    a = np.asarray(chain_a_indices, dtype=np.int_)
+    b = np.asarray(chain_b_indices, dtype=np.int_)
+    score_a_to_b = _ipsae_one_direction(pae, a, b, pae_cutoff)
+    score_b_to_a = _ipsae_one_direction(pae, b, a, pae_cutoff)
+    return max(score_a_to_b, score_b_to_a)

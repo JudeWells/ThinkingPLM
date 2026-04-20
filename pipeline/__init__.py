@@ -29,7 +29,6 @@ from pipeline.selection import (
 from pipeline.utils import (
     compute_avg_sequence_similarity,
     compute_sequence_identity,
-    extract_reward_term,
     sample_subset_indices,
     softmax_from_energies,
 )
@@ -45,7 +44,6 @@ __all__ = [
     "ProposalBandit",
     "compute_sequence_identity",
     "compute_avg_sequence_similarity",
-    "extract_reward_term",
     "softmax_from_energies",
     "sample_subset_indices",
     "update_cycle_log",

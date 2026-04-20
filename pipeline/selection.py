@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
 
 from pipeline.bandits import ThompsonArm, ThompsonSampler
-from pipeline.utils import extract_reward_term
 
 
 @dataclass
@@ -115,7 +114,6 @@ class SelectionManager:
         self,
         thompson_sampler: ThompsonSampler,
         prompt_selector: PromptSelector,
-        reward_term: str = "ipSAE",
         max_arms: int = 0,
         max_identity: float = 0.95,
     ):
@@ -124,13 +122,16 @@ class SelectionManager:
         Args:
             thompson_sampler: The ThompsonSampler to manage.
             prompt_selector: Strategy for selecting prompts (greedy or thompson).
-            reward_term: Name of the energy term to use as reward (default: "ipSAE").
             max_arms: Maximum number of arms to retain (0 = unlimited).
             max_identity: Maximum sequence identity between retained arms.
+
+        Reward signal is always the composite weighted energy
+        (``detail["energy"]``).  Lower energy = better, which ThompsonSampler
+        converts to ``[0, 1]`` reward via ``_ipsae_to_reward`` (kept named for
+        backwards compat of the stored arm field).
         """
         self.thompson_sampler = thompson_sampler
         self.prompt_selector = prompt_selector
-        self.reward_term = reward_term
         self.max_arms = max_arms
         self.max_identity = max_identity
 
@@ -152,7 +153,10 @@ class SelectionManager:
         Returns:
             Dict with registration statistics.
         """
-        reward_values = extract_reward_term(details, self.reward_term)
+        reward_values = [
+            float(d.get("energy", float("inf"))) if isinstance(d, dict) else float("inf")
+            for d in details
+        ]
         parent_arm_id = getattr(self.thompson_sampler, '_last_selected_arm_id', None)
 
         n_registered = 0
@@ -198,7 +202,10 @@ class SelectionManager:
             return None
 
         parent_arm = self.thompson_sampler.arms[parent_id]
-        reward_values = extract_reward_term(details, self.reward_term)
+        reward_values = [
+            float(d.get("energy", float("inf"))) if isinstance(d, dict) else float("inf")
+            for d in details
+        ]
 
         # Find the best (most negative) finite reward value
         finite_rewards = [(i, v) for i, v in enumerate(reward_values) if math.isfinite(v)]
@@ -329,12 +336,15 @@ class SelectionManager:
         """
         import numpy as np
 
-        reward_values = extract_reward_term(details, self.reward_term)
+        reward_values = [
+            float(d.get("energy", float("inf"))) if isinstance(d, dict) else float("inf")
+            for d in details
+        ]
         n_finite = sum(1 for v in reward_values if math.isfinite(v))
         n_inf = len(reward_values) - n_finite
 
         stats = {
-            "reward_term": self.reward_term,
+            "reward_term": "total_energy",
             "n_total": len(reward_values),
             "n_finite": n_finite,
             "n_inf": n_inf,

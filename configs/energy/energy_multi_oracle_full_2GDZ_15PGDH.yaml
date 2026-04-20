@@ -1,0 +1,225 @@
+## Multi-oracle energy: ESMFold + Boltz2 + Chai-1 + AF2BindCraft
+##
+## Target: 2GDZ (15-PGDH)
+## Runs all 4 folding oracles per sequence and extracts ipSAE, iPTM, PLDDT,
+## and PAE from each.
+##
+## Per-oracle weight totals (summed across oracles that support each term):
+##   - ipSAE total 1.0    (0.25   each × 4 oracles)
+##   - iPTM  total ~0.05  (0.0167 each × 3 oracles — ESMFold excluded, no chain_pair_iptm)
+##   - PLDDT total 0.1    (0.025  each × 4 oracles)
+##   - PAE   total 0.01   (0.0025 each × 4 oracles) [cross-term only, interface PAE]
+##
+## Single-oracle terms (attached to ESMFold only, since structure-derived and
+## SolMPNN in particular is too expensive to run 4×):
+##   - SolMPNNPerplexityEnergy: 0.03  (designability proxy, local subprocess)
+##   - HydrophobicEnergy:       0.05  (surface mode, GEN chain only)
+##   - GlobularEnergy:          0.02  (compactness prior, GEN chain only)
+##
+## Oracle-independent:
+##   - OneSidedBinderLengthEnergy: 1.0 weight, 0.01/res over 120 (binder only)
+##
+## thompson_reward_term: "ipSAE" — substring-matches all 4 ipSAEEnergy terms,
+## so the bandit reward is the mean ipSAE across oracles.
+
+folding_oracles:
+  esmfold:
+    type: BatchedESMFold
+    kwargs:
+      use_modal: false
+      max_batch_size: 16
+  boltz2:
+    type: Boltz
+    kwargs:
+      diffusion_samples: 1
+  chai1:
+    type: Chai1
+    kwargs:
+      num_diffn_samples: 1
+      num_diffn_timesteps: 100
+      num_trunk_recycles: 2
+      use_esm_embeddings: true
+      use_msa_server: false
+  af2:
+    type: AF2BindCraft
+    kwargs:
+      target_pdb: /mnt/disk2/ThinkingPLM/target_pdbs/2GDZ.pdb
+      target_chain: A
+      conda_env: BindCraft
+      af_params_dir: /mnt/disk2/BindCraft/params
+      num_recycles: 1
+      prediction_models: [0]
+
+energies:
+  # --- ESMFold metrics ---
+  # NOTE: ESMFold's result class has no `chain_pair_iptm`, so iPTMEnergy is
+  # NOT attached here. iPTM total (0.05) is distributed across the 3 oracles
+  # that do expose it (boltz2, chai1, af2) at ~0.0167 each.
+  - type: ipSAEEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.25
+      pae_cutoff: 12.0
+      name: esm
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: PLDDTEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.025
+      name: esm
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.0025
+      name: esm
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- Boltz2 metrics ---
+  - type: ipSAEEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.25
+      pae_cutoff: 10.0
+      name: b2
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.0167
+      name: b2
+  - type: PLDDTEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.025
+      name: b2
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.0025
+      name: b2
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- Chai-1 metrics ---
+  - type: ipSAEEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.25
+      pae_cutoff: 10.0
+      name: chai
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.0167
+      name: chai
+  - type: PLDDTEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.025
+      name: chai
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.0025
+      name: chai
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- AF2 BindCraft metrics ---
+  # AF2BindCraft does not expose a PAE matrix in the same form, so ipSAE is
+  # extracted from its iPTM/plDDT-derived metrics where available. We rely
+  # primarily on iPTM + PLDDT for AF2's contribution.
+  - type: ipSAEEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.25
+      pae_cutoff: 10.0
+      name: af2
+      target: MAHMVNGKVALVTGAAQGIGRAFAEALLLKGAKVALVDWNLEAGVQCKAALHEQFEPQKTLFIQCDVADQQQLRDTFRKVVDHFGRLDILVNNAGVNNEKNWEKTLQINLVSVISGTYLGLDYMSKQNGGEGGIIINMSSLAGLMPVAQQPVYCASKHGIVGFTRSAALAANLMNSGVRLNAICPGFVNTAILESIEKEENMGQYIEYKDHIKDMIKYYGILDPPLIANGLITLIEDDALNGAIMKITTSKGIHFQDYGSKENLYFQ
+      residues:
+        GEN: "all"
+        B: "all"
+  - type: iPTMEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.0167
+      name: af2
+  - type: PLDDTEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.025
+      name: af2
+      residues:
+        GEN: "all"
+  - type: PAEEnergy
+    oracle: af2
+    kwargs:
+      weight: 0.0025
+      name: af2
+      cross_term_only: true
+      residues:
+        GEN: "all"
+        B: "all"
+
+  # --- Structure-derived single-oracle terms (attached to ESMFold only) ---
+  - type: SolMPNNPerplexityEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.03
+      name: esm
+      residues:
+        GEN: "all"
+      use_modal: false
+      proteinmpnn_env: proteinmpnn
+      # Relative to the ThinkingPLM repo root — created by setup_environment.sh.
+      # Launch the pipeline with cwd=<repo root> so this resolves correctly.
+      proteinmpnn_path: .proteinmpnn_repo
+      backbone_noise: 0.1
+      ensemble_n: 10
+      decoding_order: random
+  - type: HydrophobicEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.05
+      name: esm
+      mode: surface
+      residues:
+        GEN: "all"
+  - type: GlobularEnergy
+    oracle: esmfold
+    kwargs:
+      weight: 0.02
+      name: esm
+      residues:
+        GEN: "all"
+
+  # --- Binder length penalty (oracle-independent) ---
+  - type: OneSidedBinderLengthEnergy
+    kwargs:
+      weight: 1.0
+      threshold: 120
+      penalty_per_residue: 0.01
+      binder_chain_id: GEN

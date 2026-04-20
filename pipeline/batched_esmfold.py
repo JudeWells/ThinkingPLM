@@ -153,12 +153,29 @@ class BatchedESMFold(ESMFold):
         # Clamp to [0, 1] (padding artefacts)
         local_plddt = np.clip(local_plddt, 0.0, 1.0)
 
-        # ptm: ESMFold returns a single scalar for the whole batch
-        # (not per-element).  Use it as-is for all elements — the pae
-        # matrix is per-element so energy terms that depend on pae
-        # (LIS, ipSAE) are still correct per-complex.
+        # ptm: ESMFold may return a single scalar for the whole batch
+        # rather than per-element values. Extract per-element if possible,
+        # otherwise raise an error for batch_size > 1 since sharing a
+        # single PTM across different complexes is incorrect.
         ptm = output.ptm
-        ptm_val = float(ptm.item() if hasattr(ptm, "item") else ptm)
+        ptm_np = np.asarray(ptm)
+        if ptm_np.ndim >= 1 and ptm_np.shape[0] > 1:
+            # Per-element PTM available — index into it
+            ptm_val = float(ptm_np[batch_idx])
+        elif ptm_np.ndim == 0 or (ptm_np.ndim >= 1 and ptm_np.shape[0] == 1):
+            # Single scalar — only valid for batch_size == 1
+            batch_size = len(output.atom_array)
+            if batch_size > 1:
+                raise ValueError(
+                    f"ESMFold returned a single PTM scalar for a batch of "
+                    f"{batch_size} complexes. Per-element PTM is not available, "
+                    f"so batched prediction cannot produce correct PTM values. "
+                    f"Use sequential folding or an energy config that does not "
+                    f"depend on PTM."
+                )
+            ptm_val = float(ptm_np.item())
+        else:
+            ptm_val = float(ptm_np.item())
         ptm_arr = np.array([ptm_val], dtype=np.float64)
 
         # pae: (batch, residue, residue) → trim to n_residues
