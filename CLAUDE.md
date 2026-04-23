@@ -304,6 +304,45 @@ energies:
   is fine. Boltz and AF2BindCraft use subprocess-isolated processes so
   they do not share main-process GPU memory.
 
+**Concurrent oracle execution** (optional, YAML-controlled):
+
+By default the pipeline calls each oracle's `.predict()` serially per
+sequence. On a roomier GPU you can run oracles concurrently via the
+optional `oracle_parallel_groups:` key in the energy YAML:
+
+```yaml
+oracle_parallel_groups:
+  - [boltz2, chai1]     # run these two in the same group → concurrent
+  - [esmfold]            # then run esmfold alone
+```
+
+Semantics:
+
+- Each inner list is a **group**. Oracles within a group are submitted
+  to a `ThreadPoolExecutor` and therefore run concurrently (Boltz
+  releases the GIL during `subprocess.run`; Chai-1 / ESMFold release it
+  during CUDA kernel launches, so the threads genuinely overlap).
+- Groups run **serially**, in the order listed.
+- Oracles referenced by energy terms but **not** named in any group run
+  serially at the end, one per group, in insertion order.
+- Omitting the key entirely → pure serial (same as before).
+- Memory budgeting is the user's responsibility. Boltz is a subprocess
+  with its own GPU memory; Chai-1 and ESMFold share the main process's
+  memory. A 40-48 GB GPU typically handles `[boltz2, chai1]` fine; tight
+  GPUs should keep everything serial.
+
+Measured speedup on the 3-oracle smoke test (L40S 48 GB, 325-residue
+complex, 10 diffusion samples each):
+
+- **Serial:** cycle ~180 s (Chai-1 ~95 s + Boltz ~80 s + ESMFold 7 s + misc)
+- **`[boltz2, chai1]` parallel:** cycle ~160 s (concurrent pair takes ~140 s)
+
+Net ~17-20 % wall-clock reduction per cycle on a single L40S — less than
+naive `max(Boltz, Chai-1)` arithmetic predicts because both models share
+SMs and Chai-1 slows from ~95 s → ~140 s under contention with Boltz.
+For bigger gains, split across two GPUs via CUDA_VISIBLE_DEVICES (Boltz's
+subprocess oracle makes this cleaner than Chai-1's in-process one).
+
 ### Key Design Decisions
 
 - **1 sample per cycle** for random_greedy and proposal_bandit (immediate feedback)
@@ -334,6 +373,47 @@ BAGEL (`biobagel`) and ProFam have conflicting numpy pins. Install order matters
 4. `modal` pinned to `0.73.45` to avoid deprecation errors in boileroom
 
 See `setup_environment.sh` for the full installation sequence.
+
+## Bringing up a fresh remote GPU node
+
+For fast agent-driven bring-up on a brand new Ubuntu GPU instance (e.g. fresh AWS / Nebius box), the short version is:
+
+```bash
+IP=<node_ip>
+KEY=$HOME/.ssh/gpu-ml-key.pem
+
+# 1. Rsync the repo (exclude large/regenerated dirs)
+rsync -az \
+  --exclude='.git/' --exclude='outputs/' --exclude='wandb/' \
+  --exclude='__pycache__/' --exclude='.profam_repo/' --exclude='.proteinmpnn_repo/' \
+  -e "ssh -i $KEY -o StrictHostKeyChecking=accept-new" \
+  /mnt/disk2/ThinkingPLM/ ubuntu@$IP:~/ThinkingPLM/
+
+# 2. Rsync the ProFam checkpoint.  The HF repo `alex-hh/profam-1` is GATED —
+#    `snapshot_download` returns 401 from unauthenticated nodes.  Pushing the
+#    local copy (~1.5 GB) is simpler than configuring HF auth.
+ssh -i $KEY ubuntu@$IP 'mkdir -p ~/ThinkingPLM/.profam_repo/model_checkpoints'
+rsync -az -e "ssh -i $KEY" \
+  /mnt/disk2/ThinkingPLM/.profam_repo/model_checkpoints/profam-1/ \
+  ubuntu@$IP:~/ThinkingPLM/.profam_repo/model_checkpoints/profam-1/
+
+# 3. Run setup_cloud.sh (auto-installs miniconda, both conda envs, all
+#    python deps, clones ProteinMPNN, runs SolMPNN smoke test).  Backgrounded
+#    so you can disconnect; logs to ~/setup.log.
+ssh -i $KEY ubuntu@$IP 'cd ~/ThinkingPLM && nohup ./setup_cloud.sh > ~/setup.log 2>&1 & echo "pid=$!"'
+
+# 4. Add the node to sync_outputs.sh so outputs rsync back every 10 min
+#    (edit NODES="..." on your local machine)
+
+# 5. Smoke test (3-oracle config, 2 cycles, ~10 min on an L40S)
+ssh -i $KEY ubuntu@$IP 'cd ~/ThinkingPLM && source ~/miniconda3/etc/profile.d/conda.sh && conda activate profam_bagel && python run_profam_bagel_pipeline.py --config configs/pipelines/multi_oracle_3o_15pgdh_smoke/smoke_2cycle.yaml'
+```
+
+Known gotchas `setup_environment.sh` now handles automatically, but worth knowing for debugging:
+
+- **Conda ToS accept** — fresh miniconda aborts `conda create` with `CondaToSNonInteractiveError` on channels `pkgs/main` and `pkgs/r`. The script accepts both up front.
+- **ProteinMPNN env CUDA pin** — the default `pip install torch` picks the latest wheel (cu13x), which requires a driver newer than what most deployed nodes ship. The script pins `torch==2.4.1+cu124`, which works on any driver ≥ 525.60.13. If a node's driver is older, edit the `--index-url` in `setup_environment.sh` to `cu118`.
+- **CUDA availability is asserted** after proteinmpnn env creation. A driver/runtime mismatch there is silent during the small-PDB smoke test (falls back to CPU) but hard-fails every real SolMPNN call in the pipeline. The explicit `torch.cuda.is_available()` check catches it at setup time.
 
 ## Quick Start
 

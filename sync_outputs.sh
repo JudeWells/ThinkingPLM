@@ -8,7 +8,7 @@ SSH_KEY="$HOME/.ssh/gpu-ml-key.pem"
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10"
 LOCAL_DIR="/mnt/disk2/ThinkingPLM/outputs/"
 
-NODES="3.133.117.251"
+NODES="3.133.117.251 89.169.122.54"
 
 echo "$(date): sync starting" >> "$LOGFILE"
 

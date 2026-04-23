@@ -1,0 +1,61 @@
+## 15-PGDH design campaign — 3-oracle multi (ESMFold + Boltz2 + Chai-1)
+## Seed: bindcraft_on_15pgdh_second_best_after_24h.fasta (l140)
+## Method: proposal bandit + GRPO, group size 4
+## Budget: up to 48h wall-time on a single L40S (~250-300 cycles)
+
+accept_only_improvement: true
+bt_enabled: false
+deduplicate_sequences: true
+elitism: true
+energy_config: configs/energy/energy_multi_oracle_3o_2GDZ_15PGDH.yaml
+enforce_template: false
+f_inject: 0.25
+freeze_prompt: false
+grpo_beta: 0.0
+grpo_clip_ratio: 0.2
+grpo_enabled: true
+grpo_group_size: 4
+grpo_lr: 4e-05
+grpo_replay_cycles: 63
+grpo_temperature: 1.0
+grpo_use_reference_model: false
+initial_fasta: configs/sequences/bindcraft_on_15pgdh_second_best_after_24h.fasta
+likelihood_eval_every: 10
+likelihood_track_n: 20
+max_cycles: 1000
+max_mutations: 1
+n_memory: 0
+output_dir: outputs/multi_oracle_3o_15pgdh_campaign/bindcraft_l140_bandit_grpo_rep1
+output_frequency: 1
+profam_checkpoint_dir: .profam_repo/model_checkpoints/profam-1
+profam_max_tokens: 8192
+profam_num_samples: 4
+profam_sampler: single
+profam_temperature: 0.7
+profam_top_p: 0.95
+proposal_bandit_prior_alpha: 2.0
+proposal_bandit_prior_beta: 2.0
+proposal_bandit_relative_reward: false
+proposal_method: profam
+random_init: false
+random_seed: 14001
+reinject_initial: false
+rl_every_n_cycles: 1
+rl_steps_per_cycle: 1
+sample_with_reinsertion: false
+save_structures: false
+selection_strategy: greedy
+softmax_temperature: 0.01
+thompson_exploit_bias: 8.0
+thompson_m_samples: 1
+thompson_max_arms: 10
+thompson_max_identity: 0.95
+thompson_proposal_bandit: true
+wandb_enabled: true
+wandb_project: profam-bagel-pipeline
+wandb_run_name: bindcraft_l140_bandit_grpo_rep1
+wandb_tags:
+- multi_oracle_3o
+- 15pgdh
+- bindcraft_l140
+- bandit_grpo

@@ -32,6 +32,15 @@ echo "============================================="
 echo ""
 
 # -------------------------------------------------------------------------
+# 0. Accept Anaconda channel Terms of Service (required by recent conda
+#    versions on fresh installs — `conda create` aborts with
+#    CondaToSNonInteractiveError otherwise).  Idempotent; ignored on older
+#    conda versions that don't ship the `tos` subcommand.
+# -------------------------------------------------------------------------
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r    2>/dev/null || true
+
+# -------------------------------------------------------------------------
 # 1. Create (or recreate) the conda environment
 # -------------------------------------------------------------------------
 if conda info --envs | grep -q "^${ENV_NAME} "; then
@@ -353,7 +362,9 @@ if conda info --envs | grep -q "^${PROTEINMPNN_ENV} "; then
     eval "$(conda shell.bash hook)"
     conda activate "${PROTEINMPNN_ENV}"
     python -c "import torch, numpy; print(f'  torch={torch.__version__} numpy={numpy.__version__}')" \
-      || { echo "  ERROR: torch/numpy missing from ${PROTEINMPNN_ENV} env — reinstalling"; pip install --quiet torch numpy; }
+      || { echo "  ERROR: torch/numpy missing from ${PROTEINMPNN_ENV} env — reinstalling"; \
+           pip install --quiet "torch==2.4.1" --index-url https://download.pytorch.org/whl/cu124; \
+           pip install --quiet "numpy<2"; }
   )
 else
   echo "Creating conda env '${PROTEINMPNN_ENV}' (Python 3.10 + torch + numpy)..."
@@ -361,11 +372,35 @@ else
   (
     eval "$(conda shell.bash hook)"
     conda activate "${PROTEINMPNN_ENV}"
-    # torch installed via default index — whatever pip picks is fine since
-    # this env is only used to run the MPNN scorer in a subprocess.
-    pip install --quiet torch numpy
+    # Pin torch to a cu124 wheel.  Default pip picks the latest torch (cu13x
+    # at the time of writing), which requires a driver newer than what most
+    # deployed GPU nodes ship (AWS A100s / Nebius L40S both run drivers in
+    # the 535-570 range → CUDA 12.4-12.8 runtime).  The cu124 wheel works
+    # on any driver >= 525.60.13 and matches the profam_bagel env's torch.
+    # If you're on an ancient driver (<525) pick a cu118 wheel instead.
+    pip install --quiet "torch==2.4.1" --index-url https://download.pytorch.org/whl/cu124
+    pip install --quiet "numpy<2"
   )
 fi
+
+# Assert CUDA is actually usable inside the proteinmpnn env.  The scorer
+# defaults to device='cuda' at inference time, so a driver/runtime mismatch
+# here causes every SolMPNN call in the pipeline to fail with exit 1.  The
+# tiny-PDB smoke test below silently falls back to CPU and doesn't catch
+# this class of bug — so we check torch.cuda.is_available() explicitly.
+(
+  eval "$(conda shell.bash hook)"
+  conda activate "${PROTEINMPNN_ENV}"
+  python - <<'PYEOF'
+import sys, torch
+if not torch.cuda.is_available():
+    print(f"  ERROR: proteinmpnn env torch ({torch.__version__}, cuda_build={torch.version.cuda}) cannot see the GPU.", file=sys.stderr)
+    print(f"         Driver likely older than the installed cuda wheel expects.", file=sys.stderr)
+    print(f"         Try: pip install 'torch==2.4.1' --index-url https://download.pytorch.org/whl/cu118", file=sys.stderr)
+    sys.exit(1)
+print(f"  proteinmpnn env: torch={torch.__version__} cuda_build={torch.version.cuda} gpu={torch.cuda.get_device_name(0)}")
+PYEOF
+) || exit 1
 
 # --- c) End-to-end smoke test: run the bundled scorer on a dummy dimer ---
 echo ""

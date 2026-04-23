@@ -753,6 +753,19 @@ def load_profam_model(cfg: PipelineConfig) -> Tuple[Any, str]:
   setattr(cfg_obj, "attn_implementation", attn_impl)
   setattr(cfg_obj, "_attn_implementation", attn_impl)
 
+  # transformers>=4.49 checks `isinstance(config.rope_scaling, dict)`, which
+  # silently rejects OmegaConf DictConfig and falls back to rope_type="default",
+  # corrupting llama3 RoPE frequencies. Coerce to a plain dict.
+  rs = getattr(cfg_obj, "rope_scaling", None)
+  if rs is not None and not isinstance(rs, dict):
+    try:
+      from omegaconf import OmegaConf
+      rs = OmegaConf.to_container(rs, resolve=True)
+    except Exception:
+      rs = dict(rs)
+    rs.setdefault("rope_type", "llama3")
+    cfg_obj.rope_scaling = rs
+
   model: LlamaLitModule = LlamaLitModule.load_from_checkpoint(
     ckpt_path, config=cfg_obj, strict=False, weights_only=False,
   )
@@ -1848,17 +1861,92 @@ def evaluate_sequences_with_bagel(
         pass
       _gc.collect()
 
+    # ------------------------------------------------------------------
+    # Oracle-execution plan: list of "groups" where oracles within the
+    # same group are folded concurrently and groups run serially.
+    #
+    # Controlled by the optional `oracle_parallel_groups:` key in the
+    # energy YAML; omitting it = pure serial (one oracle per group, same
+    # as the legacy behaviour).  Example for a 40-48 GB GPU:
+    #
+    #   oracle_parallel_groups:
+    #     - [boltz2, chai1]    # run these two concurrently
+    #     - [esmfold]           # then esmfold alone
+    #
+    # Oracles not listed in any explicit group run one-per-group at the
+    # end, preserving insertion order.  Threading is safe here because
+    # Boltz drops into subprocess.run() (GIL released during os.wait)
+    # and the in-process PyTorch oracles release the GIL during CUDA
+    # kernel launches, so the two genuinely overlap on the GPU.  Memory
+    # budgeting is the user's responsibility — tight GPUs should keep
+    # the default serial plan.
+    # ------------------------------------------------------------------
+    _raw_groups = energy_cfg.get("oracle_parallel_groups")
+    if _raw_groups is None:
+      plan_groups: List[List[str]] = [[n] for n in used_oracles]
+    else:
+      plan_groups = []
+      _assigned: set = set()
+      for _g_idx, _group in enumerate(_raw_groups):
+        if not isinstance(_group, list) or not all(isinstance(n, str) for n in _group):
+          raise ValueError(
+            f"energy_cfg.oracle_parallel_groups[{_g_idx}] must be a list of oracle-name strings; got {_group!r}"
+          )
+        _unknown = [n for n in _group if n not in used_oracles]
+        if _unknown:
+          raise ValueError(
+            f"energy_cfg.oracle_parallel_groups[{_g_idx}] references unknown oracle(s): {_unknown}. "
+            f"Known oracles referenced by energy terms: {list(used_oracles)}"
+          )
+        _dup = [n for n in _group if n in _assigned]
+        if _dup:
+          raise ValueError(
+            f"energy_cfg.oracle_parallel_groups[{_g_idx}] duplicates oracle(s) already assigned to an earlier group: {_dup}"
+          )
+        _assigned.update(_group)
+        plan_groups.append(list(_group))
+      # Unreferenced oracles run serially at the end, one per group.
+      plan_groups.extend([n] for n in used_oracles if n not in _assigned)
+
+    if any(len(g) > 1 for g in plan_groups):
+      _plan_str = " → ".join("||".join(g) if len(g) > 1 else g[0] for g in plan_groups)
+      print(f"  Oracle execution plan: {_plan_str}")
+
+    def _run_oracle_group(group_names: List[str], chains) -> Dict[str, Any]:
+      """Run one group of oracles; returns {name: FoldingResult or Exception}."""
+      _clear_gpu_mem()
+      specs = [(n, used_oracles[n]) for n in group_names]
+      if len(specs) == 1:
+        n, o = specs[0]
+        try:
+          return {n: o.predict(chains=chains)}
+        except Exception as exc:
+          return {n: exc}
+      import concurrent.futures as _cf
+      out: Dict[str, Any] = {}
+      with _cf.ThreadPoolExecutor(max_workers=len(specs)) as ex:
+        futs = {ex.submit(o.predict, chains=chains): n for n, o in specs}
+        for f in _cf.as_completed(futs):
+          n = futs[f]
+          try:
+            out[n] = f.result()
+          except Exception as exc:
+            out[n] = exc
+      return out
+
     for i, chains in zip(batch_indices, batch_chains):
       per_oracle_results: Dict[str, Any] = {}
       fold_failed = False
 
-      for name, oracle_inst in used_oracles.items():
-        _clear_gpu_mem()
-        try:
-          per_oracle_results[name] = oracle_inst.predict(chains=chains)
-        except Exception as exc:
-          print(f"  Sequence {i}: oracle {name!r} folding failed ({exc})")
-          fold_failed = True
+      for group in plan_groups:
+        group_results = _run_oracle_group(group, chains)
+        for name, res in group_results.items():
+          if isinstance(res, Exception):
+            print(f"  Sequence {i}: oracle {name!r} folding failed ({res})")
+            fold_failed = True
+          else:
+            per_oracle_results[name] = res
+        if fold_failed:
           break
 
       batch_folding_results[i] = None if fold_failed else per_oracle_results

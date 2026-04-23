@@ -9,9 +9,9 @@
 ##   - iPTM  total ~0.05   (0.025 each × 2 oracles — ESMFold excluded, no chain_pair_iptm)
 ##   - PLDDT total ~0.1    (0.033 each × 3 oracles)
 ##   - PAE   total ~0.01   (0.0033 each × 3 oracles) [cross-term only, interface PAE]
+##   - SolMPNN total ~0.03 (0.01 each × 3 oracles — designability on every backbone)
 ##
 ## Single-oracle terms (attached to ESMFold, cheapest in-process):
-##   - SolMPNNPerplexityEnergy: 0.03  (designability proxy, local subprocess)
 ##   - HydrophobicEnergy:       0.05  (surface mode, GEN chain only)
 ##   - GlobularEnergy:          0.02  (compactness prior, GEN chain only)
 ##
@@ -42,6 +42,18 @@ folding_oracles:
       num_trunk_recycles: 2
       use_esm_embeddings: true
       use_msa_server: false
+
+# Oracles within a group run concurrently (ThreadPoolExecutor).  Groups run
+# serially.  Omit for pure serial (legacy).  Memory budgeting is the user's
+# responsibility — see CLAUDE.md for the sizing heuristic.
+#
+# On a 40-48 GB GPU (L40S, A100-40) boltz2+chai1 fit together because Boltz
+# is subprocess-isolated (~10-15 GB in a separate process) and Chai-1 uses
+# ~15-25 GB in the main process.  Add esmfold to the same group only on
+# 80 GB cards.  On tight GPUs, comment this key out.
+oracle_parallel_groups:
+  - [boltz2, chai1]
+  - [esmfold]
 
 energies:
   # --- ESMFold metrics ---
@@ -139,11 +151,16 @@ energies:
         GEN: "all"
         B: "all"
 
-  # --- Structure-derived single-oracle terms (attached to ESMFold) ---
+  # --- SolMPNN designability (one per oracle) ---
+  # Oracle-agnostic: scores how well the binder sequence matches each
+  # predictor's backbone.  Weights 0.01 × 3 = 0.03 total (same as the
+  # previous single-oracle setup).  Useful as a consensus filter — a
+  # sequence that scores well under all three backbones is more likely
+  # designable than one that only pleases a single oracle.
   - type: SolMPNNPerplexityEnergy
     oracle: esmfold
     kwargs:
-      weight: 0.03
+      weight: 0.01
       name: esm
       residues:
         GEN: "all"
@@ -154,6 +171,34 @@ energies:
       backbone_noise: 0.1
       ensemble_n: 10
       decoding_order: random
+  - type: SolMPNNPerplexityEnergy
+    oracle: boltz2
+    kwargs:
+      weight: 0.01
+      name: b2
+      residues:
+        GEN: "all"
+      use_modal: false
+      proteinmpnn_env: proteinmpnn
+      proteinmpnn_path: .proteinmpnn_repo
+      backbone_noise: 0.1
+      ensemble_n: 10
+      decoding_order: random
+  - type: SolMPNNPerplexityEnergy
+    oracle: chai1
+    kwargs:
+      weight: 0.01
+      name: chai
+      residues:
+        GEN: "all"
+      use_modal: false
+      proteinmpnn_env: proteinmpnn
+      proteinmpnn_path: .proteinmpnn_repo
+      backbone_noise: 0.1
+      ensemble_n: 10
+      decoding_order: random
+
+  # --- Structure-derived single-oracle terms (attached to ESMFold) ---
   - type: HydrophobicEnergy
     oracle: esmfold
     kwargs:
@@ -171,9 +216,12 @@ energies:
         GEN: "all"
 
   # --- Binder length penalty (oracle-independent) ---
+  # Threshold raised to 140 so the longest BindCraft seed (l140) starts at
+  # zero penalty.  Shorter seeds (≤121 aa) also unaffected — penalty only
+  # activates when binder_length > threshold.
   - type: OneSidedBinderLengthEnergy
     kwargs:
       weight: 1.0
-      threshold: 120
+      threshold: 140
       penalty_per_residue: 0.01
       binder_chain_id: GEN
